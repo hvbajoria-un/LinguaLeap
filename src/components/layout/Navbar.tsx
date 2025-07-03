@@ -24,7 +24,7 @@ export function Navbar() {
 
           {/* To show the app title in the center of the navbar */}
           <div className="flex-1 flex justify-center font-bold text-white" style={{ fontSize: '20px' }}>
-            Unstop AI DUO
+            Unstop AI DUO 2.0
           </div>
           
           <div className="flex space-x-4">

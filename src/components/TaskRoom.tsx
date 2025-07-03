@@ -11,6 +11,7 @@ import { LowLevelRTClient, SessionUpdateMessage, Voice } from 'rt-client';
 import { Camera, CameraOff, PhoneOff } from 'lucide-react';
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { useInterviewStore } from '../store/interviewStore';
+import { useInterviewMetaStore } from '../store/interviewStore';
 
 interface TaskRoomProps {
   taskNumber: number;
@@ -56,12 +57,18 @@ export const TaskRoom: React.FC<TaskRoomProps> = ({
   const videoRef = useRef<HTMLVideoElement>(null);
   const realtimeStreaming = useRef<LowLevelRTClient | null>(null);
   const location = useLocation();
-  const selectedRole = location.state?.selectedRole || '';
-  const skills = location.state?.skills || [];
-  const otherRole = location.state?.otherRole || '';
-  const companyName = location.state?.companyName || '';
-  const companyDescription = location.state?.companyDescription || '';
-  const idealRating = location.state?.idealRating || [];
+  let {
+    selectedRole, skills, otherRole, companyName, companyDescription, idealRating
+  } = location.state || {};
+  const interviewMeta = useInterviewMetaStore();
+  if (!selectedRole || !skills || !companyName) {
+    selectedRole = interviewMeta.selectedRole;
+    skills = interviewMeta.skills;
+    otherRole = interviewMeta.otherRole;
+    companyName = interviewMeta.companyName;
+    companyDescription = interviewMeta.companyDescription;
+    idealRating = interviewMeta.idealRating;
+  }
   const [isStarting, setIsStarting] = useState(false);
   const audioPlayer = useRef<Player | null>(null);
   const audioRecorder = useRef<Recorder | null>(null);
@@ -278,6 +285,7 @@ export const TaskRoom: React.FC<TaskRoomProps> = ({
     const taskJson = {
       role: selectedRole === 'Others' ? otherRole : selectedRole,
       company: companyName || 'the company',
+      job_description: companyDescription || '',
       skills,
       transcript: taskTranscriptWithSkill,
       taskNumber: taskNum,
@@ -339,6 +347,7 @@ export const TaskRoom: React.FC<TaskRoomProps> = ({
     const finalJson = {
       role: selectedRole === 'Others' ? otherRole : selectedRole,
       company: companyName || 'the company',
+      job_description: companyDescription || '',
       skills,
       transcript: allTranscriptsWithSkill,
       // Optionally add more context if needed

@@ -37,6 +37,16 @@ interface MultiTaskInterviewStore {
   getFinalReport: () => string | null;
 }
 
+interface InterviewMetaState {
+  selectedRole: string;
+  skills: string[];
+  otherRole: string;
+  companyName: string;
+  companyDescription: string;
+  idealRating: number[];
+  setInterviewMeta: (meta: Partial<Omit<InterviewMetaState, 'setInterviewMeta'>>) => void;
+}
+
 // fs.writeFileSync(filePath, JSON.stringify(sampleInterviews, null, 2), 'utf-8');
 
 export const useInterviewStore = create<InterviewState>((set) => ({
@@ -72,4 +82,14 @@ export const useMultiTaskInterviewStore = create<MultiTaskInterviewStore>((set, 
   finalReport: null,
   setFinalReport: (report) => set({ finalReport: report }),
   getFinalReport: () => get().finalReport,
+}));
+
+export const useInterviewMetaStore = create<InterviewMetaState>((set) => ({
+  selectedRole: '',
+  skills: [],
+  otherRole: '',
+  companyName: '',
+  companyDescription: '',
+  idealRating: [],
+  setInterviewMeta: (meta) => set((state) => ({ ...state, ...meta })),
 }));

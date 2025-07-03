@@ -5,6 +5,7 @@ import { Role, jobDescription, other} from '../types/interview';
 import { Button } from './ui/Button';
 import { GoogleGenerativeAI} from "@google/generative-ai";
 import { MdWifi, MdHeadsetMic, MdVolumeOff, MdSchedule, MdSpeed, MdCall, MdVolumeUp, MdSpellcheck, MdTextFields, MdInfo } from 'react-icons/md';
+import { useInterviewMetaStore } from '../store/interviewStore';
 
 export function InterviewSetup() {
   const navigate = useNavigate();
@@ -17,6 +18,8 @@ export function InterviewSetup() {
   const [companyName, setCompanyName] = useState<string>('');
   const [companyDescription, setCompanyDescription] = useState<string>('');
   const [idealRating, setIdealRating] = useState<number[]>([]);
+
+  const setInterviewMeta = useInterviewMetaStore((state) => state.setInterviewMeta);
 
   const predefinedmarketingSkills = [
     'Marketing Strategy',
@@ -145,6 +148,7 @@ export function InterviewSetup() {
       setIdealRating(idealratings);
       setTimeout(() => {
         if (skills.length > 0 && idealRating.length > 0) {
+          setInterviewMeta({ selectedRole, skills, otherRole, companyName, companyDescription, idealRating });
           navigate('/interview-room/task/1', { state: { selectedRole, skills, otherRole, companyName, companyDescription, idealRating } });
         }
       }, 100);
