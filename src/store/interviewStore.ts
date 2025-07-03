@@ -41,8 +41,6 @@ interface InterviewMetaState {
   selectedRole: string;
   skills: string[];
   otherRole: string;
-  companyName: string;
-  companyDescription: string;
   idealRating: number[];
   setInterviewMeta: (meta: Partial<Omit<InterviewMetaState, 'setInterviewMeta'>>) => void;
 }
@@ -88,8 +86,6 @@ export const useInterviewMetaStore = create<InterviewMetaState>((set) => ({
   selectedRole: '',
   skills: [],
   otherRole: '',
-  companyName: '',
-  companyDescription: '',
   idealRating: [],
   setInterviewMeta: (meta) => set((state) => ({ ...state, ...meta })),
 }));

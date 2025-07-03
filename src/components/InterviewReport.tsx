@@ -80,9 +80,9 @@ export function InterviewReport() {
               <div className="flex items-center gap-3 mb-4">
                 <FileText className="h-8 w-8" />
                 <h1 className="text-3xl font-bold">Final Interview Report</h1>
-                {isInterview(interview) ? (
+                {/* {isInterview(interview) ? (
                   <span className="ml-6 text-gray-400 text-base font-medium">Time Taken: {formatDuration((interview as Interview).duration)}</span>
-                ) : null}
+                ) : null} */}
               </div>
               <div className="bg-gray-800 rounded-lg p-6 min-h-[300px] mb-8">
                 <div dangerouslySetInnerHTML={{ __html: String(markdown(finalReport)) }} />
@@ -101,10 +101,16 @@ export function InterviewReport() {
                   if (report) {
                     try {
                       const parsed = typeof report === 'string' ? JSON.parse(report) : report;
+                      if (parsed && (parsed.data?.role || parsed.role)) {
+                        const data = parsed.data || parsed;
+                        if (data.role && typeof data.role === 'string' && data.role.trim().toLowerCase() === 'sentence builds') {
+                          taskName = 'Sentence Builds';
+                        }
+                      }
                       if (parsed && (parsed.data?.skills_evaluation || parsed.skills_evaluation)) {
                         const data = parsed.data || parsed;
                         const skills = Object.keys(data.skills_evaluation || {});
-                        if (skills.length > 0) taskName = skills[0];
+                        if (skills.length > 0 && taskName === `Task ${r.taskNumber}`) taskName = skills[0];
                       } else if (parsed && parsed.title) {
                         taskName = parsed.title;
                       }
@@ -256,7 +262,20 @@ export function InterviewReport() {
   if (allTaskReports && allTaskReports.length > 0) {
     // --- Render the selected task report using unified UI ---
     const selectedTaskReport = allTaskReports[activeTab]?.report;
-    const normalized = normalizeSingleTaskReport(selectedTaskReport);
+    const selectedTaskNumber = allTaskReports[activeTab]?.taskNumber;
+    const allTranscripts = useMultiTaskInterviewStore().getAllTranscripts();
+    const normalized = (() => {
+      const norm = normalizeSingleTaskReport(selectedTaskReport);
+      if (!norm) return null;
+      // If transcript is missing or empty, fetch from store
+      if (!norm.transcript || norm.transcript.length === 0) {
+        const found = allTranscripts.find(t => t.taskNumber === selectedTaskNumber);
+        if (found && found.transcript && found.transcript.length > 0) {
+          return { ...norm, transcript: found.transcript };
+        }
+      }
+      return norm;
+    })();
     if (normalized) {
       const { role, company, job_description, skills, candidateScores, idealScores, explanations, skillRatings, strengths, weaknesses, overallFeedback, transcript, customQuestions } = normalized;
       const totalObtained = candidateScores.reduce((a: number, b: number) => a + b, 0);
@@ -378,10 +397,16 @@ export function InterviewReport() {
                 if (report) {
                   try {
                     const parsed = typeof report === 'string' ? JSON.parse(report) : report;
+                    if (parsed && (parsed.data?.role || parsed.role)) {
+                      const data = parsed.data || parsed;
+                      if (data.role && typeof data.role === 'string' && data.role.trim().toLowerCase() === 'sentence builds') {
+                        taskName = 'Sentence Builds';
+                      }
+                    }
                     if (parsed && (parsed.data?.skills_evaluation || parsed.skills_evaluation)) {
                       const data = parsed.data || parsed;
                       const skills = Object.keys(data.skills_evaluation || {});
-                      if (skills.length > 0) taskName = skills[0];
+                      if (skills.length > 0 && taskName === `Task ${r.taskNumber}`) taskName = skills[0];
                     } else if (parsed && parsed.title) {
                       taskName = parsed.title;
                     }
@@ -510,23 +535,19 @@ export function InterviewReport() {
                 <div className="font-bold text-lg mb-2">Overall Feedback</div>
                 <div className="bg-gray-800 rounded-lg p-6 text-gray-200">{overallFeedback}</div>
               </div>
-              {/* Custom Questions */}
-              {(customQuestions && Object.keys(customQuestions).length > 0 && Object.values(customQuestions).some(v => typeof v === 'string' ? v.trim().toLowerCase() !== 'n/a' : true)) ? (
+              {/* Transcript Section (replaces Custom Questions) */}
+              {transcript && transcript.length > 0 && (
                 <div className="mb-8">
-                  <div className="font-bold text-lg mb-2">Custom Questions</div>
+                  <div className="font-bold text-lg mb-2">Task Transcript</div>
                   <div className="bg-gray-800 rounded-lg p-6">
-                    {Object.entries(customQuestions).map(([qKey, qVal]: [string, any], i: number) => (
-                      (typeof qVal === 'string' && qVal.trim().toLowerCase() === 'n/a') ? null : (
-                        <div key={i} className="mb-4">
-                          <div className="font-semibold text-blue-200 mb-1">{qKey}</div>
-                          <div className="text-gray-200">{qVal}</div>
-                        </div>
-                      )
+                    {transcript.map((msg: any, i: number) => (
+                      <div key={i} className="mb-2">
+                        <span className="font-semibold text-blue-200">{msg.speaker === 'interviewer' ? 'Unstop Bot' : 'You'}:</span> <span className="text-gray-200">{msg.message}</span>
+                      </div>
                     ))}
-                    <div className="text-xs text-gray-400 mt-4">*This report is AI-generated; please ensure to review and verify all information before making any decisions.</div>
                   </div>
                 </div>
-              ) : null}
+              )}
             </div>
           </div>
         </div>
@@ -971,23 +992,19 @@ export function InterviewReport() {
               <div className="font-bold text-lg mb-2">Overall Feedback</div>
               <div className="bg-gray-800 rounded-lg p-6 text-gray-200">{overallFeedback}</div>
             </div>
-            {/* Custom Questions */}
-            {(customQuestions && Object.keys(customQuestions).length > 0 && Object.values(customQuestions).some(v => typeof v === 'string' ? v.trim().toLowerCase() !== 'n/a' : true)) ? (
+            {/* Transcript Section (replaces Custom Questions) */}
+            {transcript && transcript.length > 0 && (
               <div className="mb-8">
-                <div className="font-bold text-lg mb-2">Custom Questions</div>
+                <div className="font-bold text-lg mb-2">Task Transcript</div>
                 <div className="bg-gray-800 rounded-lg p-6">
-                  {Object.entries(customQuestions).map(([qKey, qVal]: [string, any], i: number) => (
-                    (typeof qVal === 'string' && qVal.trim().toLowerCase() === 'n/a') ? null : (
-                      <div key={i} className="mb-4">
-                        <div className="font-semibold text-blue-200 mb-1">{qKey}</div>
-                        <div className="text-gray-200">{qVal}</div>
-                      </div>
-                    )
+                  {transcript.map((msg: any, i: number) => (
+                    <div key={i} className="mb-2">
+                      <span className="font-semibold text-blue-200">{msg.speaker === 'interviewer' ? 'Unstop Bot' : 'You'}:</span> <span className="text-gray-200">{msg.message}</span>
+                    </div>
                   ))}
-                  <div className="text-xs text-gray-400 mt-4">*This report is AI-generated; please ensure to review and verify all information before making any decisions.</div>
                 </div>
               </div>
-            ) : null}
+            )}
           </div>
         </div>
       </div>

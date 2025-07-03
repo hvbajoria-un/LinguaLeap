@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, X } from 'lucide-react';
-import { Role, jobDescription, other} from '../types/interview';
+import { Role, other } from '../types/interview';
 import { Button } from './ui/Button';
 import { GoogleGenerativeAI} from "@google/generative-ai";
 import { MdWifi, MdHeadsetMic, MdVolumeOff, MdSchedule, MdSpeed, MdCall, MdVolumeUp, MdSpellcheck, MdTextFields, MdInfo } from 'react-icons/md';
@@ -13,10 +13,7 @@ export function InterviewSetup() {
   const [selectedRole, setSelectedRole] = useState<Role>('Sales Executive');
   const [skills, setSkills] = useState<string[]>([]);
   const [newSkill, setNewSkill] = useState('');
-  const [jobDescription, setJobDescription] = useState<jobDescription>('');
   const [otherRole, setOtherRole] = useState<other>('');
-  const [companyName, setCompanyName] = useState<string>('');
-  const [companyDescription, setCompanyDescription] = useState<string>('');
   const [idealRating, setIdealRating] = useState<number[]>([]);
 
   const setInterviewMeta = useInterviewMetaStore((state) => state.setInterviewMeta);
@@ -95,7 +92,7 @@ export function InterviewSetup() {
   }, [selectedRole]);
 
   useEffect(() => {
-    if (selectedRole === 'Others' && jobDescription && (skills.length === 5 || skills.length === 0)) {
+    if (selectedRole === 'Others' && (skills.length === 5 || skills.length === 0)) {
       setSkills([]);
       const apiKey = 'AIzaSyDHGWLeiroFLiCqfahIWCrDkWEjpjbFcMI';
       const genAI = new GoogleGenerativeAI(apiKey);
@@ -112,24 +109,8 @@ export function InterviewSetup() {
         maxOutputTokens: 8192,
         responseMimeType: "text/plain",
       };
-      
-      async function run(jobdesc: string) {
-        const chatSession = model.startChat({
-          generationConfig,
-          history: [
-          ],
-        });
-      
-        const result = await chatSession.sendMessage(jobdesc);
-        const extractedSkills = result.response.text().replace(/[^A-Za-z\s,]/g, '').split(',').map(skill => skill.trim());
-        predefinedOtherSkills=extractedSkills;
-        predefinedOtherSkills.forEach(skill => {
-          setSkills(prevSkills => [...prevSkills, skill]);
-      });
-      }
-      run(jobDescription);
     }
-  }, [jobDescription]);
+  }, [selectedRole, skills.length]);
 
   const handleAddSkill = () => {
     if (newSkill.trim() && !skills.includes(newSkill.trim())) {
@@ -148,8 +129,8 @@ export function InterviewSetup() {
       setIdealRating(idealratings);
       setTimeout(() => {
         if (skills.length > 0 && idealRating.length > 0) {
-          setInterviewMeta({ selectedRole, skills, otherRole, companyName, companyDescription, idealRating });
-          navigate('/interview-room/task/1', { state: { selectedRole, skills, otherRole, companyName, companyDescription, idealRating } });
+          setInterviewMeta({ selectedRole, skills, otherRole, idealRating });
+          navigate('/interview-room/task/1', { state: { selectedRole, skills, otherRole, idealRating } });
         }
       }, 100);
     }
@@ -388,44 +369,6 @@ export function InterviewSetup() {
           </div>
           }
           
-          { selectedRole === 'Others' && <div>
-            <label className="block text-sm font-medium text-gray-200">
-              Job Description
-            </label>
-            <textarea
-              value={jobDescription}
-              onChange={(e) => setJobDescription(e.target.value as jobDescription)}
-              placeholder="Enter job description"
-              className="block w-full mt-1 pl-3 pr-10 py-2 text-white bg-gray-700 border-gray-600 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
-            />
-          </div>
-          }
-
-          <div>
-            <label className="block text-sm font-medium text-gray-200">
-              Company Name
-            </label>
-            <input
-              type="text"
-              value={companyName}
-              onChange={(e) => setCompanyName(e.target.value)}
-              placeholder="Type company name"
-              className="block w-full mt-1 pl-3 pr-10 py-2 text-white bg-gray-700 border-gray-600 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
-            />
-          </div>
-          
-          <div>
-            <label className="block text-sm font-medium text-gray-200">
-              About Company
-            </label>
-            <textarea
-              value={companyDescription}
-              onChange={(e) => setCompanyDescription(e.target.value)}
-              placeholder="Enter job description"
-              className="block w-full mt-1 pl-3 pr-10 py-2 text-white bg-gray-700 border-gray-600 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
-            />
-          </div>
-
           <div>
             <label className="block text-sm font-medium text-gray-200">
               Skills
@@ -476,7 +419,7 @@ export function InterviewSetup() {
             </Button>
             <Button
               onClick={handleStartInterview}
-              disabled={(selectedRole !== 'Others' && skills.length === 0 ) || (selectedRole === 'Others' && jobDescription === '' && otherRole === '' && companyName === '' && companyDescription === '')}  
+              disabled={(selectedRole !== 'Others' && skills.length === 0 ) || (selectedRole === 'Others' && otherRole === '')}  
               className="w-1/2 bg-blue-600 hover:bg-blue-700"
             >
               Start Interview

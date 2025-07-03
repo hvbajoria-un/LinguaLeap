@@ -58,15 +58,13 @@ export const TaskRoom: React.FC<TaskRoomProps> = ({
   const realtimeStreaming = useRef<LowLevelRTClient | null>(null);
   const location = useLocation();
   let {
-    selectedRole, skills, otherRole, companyName, companyDescription, idealRating
+    selectedRole, skills, otherRole, idealRating
   } = location.state || {};
   const interviewMeta = useInterviewMetaStore();
-  if (!selectedRole || !skills || !companyName) {
+  if (!selectedRole || !skills) {
     selectedRole = interviewMeta.selectedRole;
     skills = interviewMeta.skills;
     otherRole = interviewMeta.otherRole;
-    companyName = interviewMeta.companyName;
-    companyDescription = interviewMeta.companyDescription;
     idealRating = interviewMeta.idealRating;
   }
   const [isStarting, setIsStarting] = useState(false);
@@ -271,23 +269,39 @@ export const TaskRoom: React.FC<TaskRoomProps> = ({
     'relative before:content-["" ] before:absolute before:inset-0 before:rounded-2xl before:border-4 before:border-blue-500 before:animate-pulse before:pointer-events-none';
 
   // Shared system instruction for Gemini report generation (strict JSON format)
-  const systemInstruction = `Evaluate the interview performance of a candidate for the ${selectedRole === 'Others' ? otherRole : selectedRole} role at ${companyName || 'the company'}, using the provided skills requirements, interview transcript, and custom questions specified. Assess the candidate's skills strictly and provide minimal scores where responses are vague or insufficient.\n\n### Evaluation Process:\n1. Review the Provided Inputs: Analyze the required skills, and problem statements to identify the evaluation criteria.\n2. Assess the Candidate's Skills: Evaluate each skill mentioned in ${skills.join(', ')} based on their interview responses. Assign a numeric rating (1-10) and a justification for the score, being particularly strict if answers lack depth or specificity.\n3. Extract Custom Questions: Extract short, clear answers to any custom questions from the interaction, ensuring they are concise and relevant.\n4. Provide Strengths and Weaknesses: Derive strengths and weaknesses from the candidate's performance in relation to the requirements of the role.\n5. Overall Feedback: Make a recommendation on whether the candidate is suitable for the role, backed by detailed reasoning.\n\n### Scoring Metrics:\n- 1-3: Poor performance or major gaps in knowledge.\n- 4-6: Average performance with room for improvement.\n- 7-9: Good performance with strong understanding.\n- 10: Exceptional performance, exceeding expectations.\n\n### Output Format\nThe final evaluation report should be output in the following structured JSON format:\n\n{\n  "role": "[Role Name]",\n  "company": "[Company Name]",\n  "job_description": "[Brief job description or key responsibilities]",\n  "skills_evaluation": {\n    "[Skill_name]": {\n      "rating": "[Numeric rating, e.g., 3/10]",\n      "explanation": "[Detailed reasoning for the score, referring to specific answers or interactions]"\n    }\n  },\n  "candidate_feedback": {\n    "strengths": [\n      "[Identified strength from the interaction or responses]"\n    ],\n    "weaknesses": [\n      "[Identified weakness or gap in knowledge/skills]"\n    ],\n    "overall_feedback": "[Summarized feedback on candidate's performance, suitability for the role, and any key areas for growth.]"\n  },\n  "customQuestions": {\n    "Question": "[The given question]",\n    "Answer": "[Extracted answer to Question]"\n  }\n}\n\n### Notes:\n- Provide strong, evidence-based reasoning for all skill scores. Avoid vague or generic responses.\n- Ensure the answers to custom questions are clearly extracted and formatted.\n- Be very strict in your evaluation and reflective of insufficient answers in scoring or feedback.\n- In the skill_evaluation make sure that the inner nested JSON has the skill name as key.`;
+  const systemInstruction = `Evaluate the interview performance of a candidate for the ${selectedRole === 'Others' ? otherRole : selectedRole} role at the company, using the provided skills requirements, interview transcript, and custom questions specified. Assess the candidate's skills strictly and provide minimal scores where responses are vague or insufficient.\n\n### Evaluation Process:\n1. Review the Provided Inputs: Analyze the required skills, and problem statements to identify the evaluation criteria.\n2. Assess the Candidate's Skills: Evaluate each skill mentioned in ${skills.join(', ')} based on their interview responses. Assign a numeric rating (1-10) and a justification for the score, being particularly strict if answers lack depth or specificity.\n3. Extract Custom Questions: Extract short, clear answers to any custom questions from the interaction, ensuring they are concise and relevant.\n4. Provide Strengths and Weaknesses: Derive strengths and weaknesses from the candidate's performance in relation to the requirements of the role.\n5. Overall Feedback: Make a recommendation on whether the candidate is suitable for the role, backed by detailed reasoning.\n\n### Scoring Metrics:\n- 1-3: Poor performance or major gaps in knowledge.\n- 4-6: Average performance with room for improvement.\n- 7-9: Good performance with strong understanding.\n- 10: Exceptional performance, exceeding expectations.\n\n### Output Format\nThe final evaluation report should be output in the following structured JSON format:\n\n{\n  "role": "[Role Name]",\n  "company": "[Company Name]",\n  "job_description": "[Brief job description or key responsibilities]",\n  "skills_evaluation": {\n    "[Skill_name]": {\n      "rating": "[Numeric rating, e.g., 3/10]",\n      "explanation": "[Detailed reasoning for the score, referring to specific answers or interactions]"\n    }\n  },\n  "candidate_feedback": {\n    "strengths": [\n      "[Identified strength from the interaction or responses]"\n    ],\n    "weaknesses": [\n      "[Identified weakness or gap in knowledge/skills]"\n    ],\n    "overall_feedback": "[Summarized feedback on candidate's performance, suitability for the role, and any key areas for growth.]"\n  },\n  "customQuestions": {\n    "Question": "[The given question]",\n    "Answer": "[Extracted answer to Question]"\n  }\n}\n\n### Notes:\n- Provide strong, evidence-based reasoning for all skill scores. Avoid vague or generic responses.\n- Ensure the answers to custom questions are clearly extracted and formatted.\n- Be very strict in your evaluation and reflective of insufficient answers in scoring or feedback.\n- In the skill_evaluation make sure that the inner nested JSON has the skill name as key.`;
 
   // Helper to generate a per-task report using Gemini 2.0 Flash (non-blocking, with polling)
   const generateTaskReportNonBlocking = (taskNum: number, transcriptData: any) => {
     let isCancelled = false;
-    // Tag each transcript message with the current task/skill
-    const taskTranscriptWithSkill = transcriptData.map((msg: any) => ({
-      ...msg,
-      skill: taskTitle
-    }));
-    // Compose a task-specific prompt with JSON data
+    // Use the full transcript as-is for Gemini
+    let taskSkills = skills;
+    let taskRole = selectedRole === 'Others' ? otherRole : selectedRole;
+    if (taskNum === 1) {
+      taskSkills = ['Pronunciation', 'Fluency', 'Attention', 'Focus'];
+      taskRole = 'Reading';
+    } else if (taskNum === 2) {
+      taskSkills = ['Working Memory', 'Syntactic Awareness', 'Grammar', 'Logical Sequencing', 'Listening Comprehension'];
+      taskRole = 'Sentence Builds';
+    } else if (taskNum === 3) {
+      taskSkills = ['Listening Comprehension', 'Information Retention', 'Logical Reasoning', 'Focus and Task Adherence', 'Recall'];
+      taskRole = 'Conversation';
+    } else if (taskNum === 4) {
+      taskSkills = ['Pronunciation', 'Fluency', 'Attention', 'Focus'];
+      taskRole = 'Reading';
+    } else if (taskNum === 5) {
+      taskSkills = ['Working Memory', 'Syntactic Awareness', 'Grammar', 'Logical Sequencing', 'Listening Comprehension'];
+      taskRole = 'Sentence Builds';
+    } else if (taskNum === 6) {
+      taskSkills = ['Listening Comprehension', 'Information Retention', 'Logical Reasoning', 'Focus and Task Adherence', 'Recall'];
+      taskRole = 'Conversations';
+    }
     const taskJson = {
-      role: selectedRole === 'Others' ? otherRole : selectedRole,
-      company: companyName || 'the company',
-      job_description: companyDescription || '',
-      skills,
-      transcript: taskTranscriptWithSkill,
+      role: taskRole,
+      company: 'the company',
+      job_description: '',
+      skills: taskSkills,
+      transcript: transcriptData, // Use the full transcript array
       taskNumber: taskNum,
     };
     const taskPrompt = `Below is the JSON data for a single interview task. Parse the JSON and use it to evaluate the candidate's performance for Task ${taskNum}. Return the report in the specified JSON format only.\n\nJSON:\n\n${JSON.stringify(taskJson, null, 2)}\n\nFollow the system instruction for the output format.`;
@@ -298,7 +312,7 @@ export const TaskRoom: React.FC<TaskRoomProps> = ({
       systemInstruction,
     });
     const generationConfig = {
-      temperature: 0.55,
+      temperature: 0.35,
       responseMimeType: "application/json",
     };
     (async () => {
@@ -338,21 +352,20 @@ export const TaskRoom: React.FC<TaskRoomProps> = ({
   const generateFinalReport = async () => {
     if (getFinalReport()) return; // Already generated
     setIsGeneratingFinalReport(true);
-    // Tag each transcript message with the relevant skill/task
+    // Use the full transcript for all tasks
     const allTranscriptsWithSkill = useMultiTaskInterviewStore.getState().getAllTranscripts().map((t, idx) => {
       const skill = skills[idx] || `Task ${t.taskNumber}`;
       return t.transcript.map((msg: any) => ({ ...msg, skill }));
     }).flat();
-    // Compose the feedback prompt with all data in JSON
     const finalJson = {
       role: selectedRole === 'Others' ? otherRole : selectedRole,
-      company: companyName || 'the company',
-      job_description: companyDescription || '',
+      company: 'the company',
+      job_description: '',
       skills,
-      transcript: allTranscriptsWithSkill,
+      transcript: allTranscriptsWithSkill, // Use the full transcript array
       // Optionally add more context if needed
     };
-    const feedbackPrompt = `Below is the JSON data for the entire interview. Parse the JSON and use it to generate a detailed evaluation report for the candidate. Return the report in the specified JSON format only.\n\nJSON:\n\n${JSON.stringify(finalJson, null, 2)}\n\nFollow the system instruction for the output format.`;
+    const feedbackPrompt = `Could you please share me the detailed evaluation report of the candidate and if he/she is eligible for the role or not based on the given data:\n\n${JSON.stringify(finalJson, null, 2)}\n\nFollow the system instruction for the output format.`;
     const apiKey = 'AIzaSyDHGWLeiroFLiCqfahIWCrDkWEjpjbFcMI';
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({
@@ -360,7 +373,7 @@ export const TaskRoom: React.FC<TaskRoomProps> = ({
       systemInstruction,
     });
     const generationConfig = {
-      temperature: 0.55,
+      temperature: 0.35,
       responseMimeType: "application/json",
     };
     try {
@@ -463,7 +476,161 @@ export const TaskRoom: React.FC<TaskRoomProps> = ({
       const deploymentOrModel = "gpt-4o-mini-realtime-preview";
       realtimeStreaming.current = new LowLevelRTClient(new URL(endpoint), { key }, { deployment: deploymentOrModel });
       // Use robust config and prompt
-      const defaultPrompt = `Conduct an interactive interview for a ${selectedRole === 'Others' ? otherRole : selectedRole} role at ${companyName || 'the company'}. Assess the candidate's skills (${skills.join(', ')}) through realistic questions. Do not give the response of the previous response in more than one short line and also without giving any feedback. Wait for the candidate to answer before proceeding to the next question. Be concise, friendly, and professional.`;
+      let defaultPrompt;
+      let taskSkills = skills;
+      let taskRole = selectedRole === 'Others' ? otherRole : selectedRole;
+      // --- Task 1: Repeat Task ---
+      if (taskNumber === 1) {
+        defaultPrompt = `You are Harshavardhan, an AI guide whose primary goal is to assess a user's ability to accurately repeat spoken sentences across varying levels of complexity. Your interaction should be structured, clear, and direct, adhering strictly to the defined assessment flow.
+
+Core Principles for Interaction:
+
+1.  Persona: Maintain a professional and clear demeanor. Your tone should be neutral and focused solely on guiding the user through the assessment.
+2.  Introduction and Task Description:
+    * Begin by introducing yourself as Harshavardhan.
+    * Clearly describe the "Repeat" task: "I will say a sentence, and your task is to repeat it exactly as you hear it. Please speak clearly into your microphone immediately after you hear each sentence."
+3.  Question Handling (Strictly Task-Related):
+    * After the introduction, explicitly ask if the user has any questions *related to the task*.
+    * Crucially, if the user asks a question that is not directly about understanding how to perform the "Repeat" task (e.g., asking about assessment duration, personal questions, or attempting to change the language), do NOT engage with it. Instead, politely but firmly redirect to the task or proceed to the first question. For instance, if they ask an irrelevant question, you can say, "Let's focus on the 'Repeat' task now. Are you ready to begin?"
+    * If they ask a relevant question (e.g., "Do I need to speak immediately?"), provide a concise answer based on your initial instructions.
+    * Once questions are addressed or redirected, transition directly to the first sentence.
+4.  Sequential Question Delivery (Fixed Progression): You will present exactly four sentences, each corresponding to a specific difficulty level. The progression is fixed regardless of the user's previous response. You will not provide feedback on their accuracy during the task.
+    * Easy Level Sentence: Present a simple, short sentence.
+    * Medium Level Sentence: Present a moderately longer sentence with a bit more detail or a simple clause.
+    * Expert Level Sentence: Present a more complex sentence, perhaps with multiple clauses, more nuanced vocabulary, or requiring careful articulation.
+    * Master Level Sentence: Present a long, highly complex sentence, potentially with idiomatic expressions, challenging phonetics, or several interconnected ideas that require significant memory and precise repetition.
+5.  Strict Adherence to Sequence: Present one sentence at a time. After presenting a sentence, pause briefly to allow the user to respond. Do not move to the next sentence until you have either detected a response or a reasonable pause indicating they are ready for the next. Do not repeat sentences.
+6.  No Language Changes: Do not entertain requests to change the language of the assessment.
+7.  Task Completion and Conclusion: After presenting the fourth (Master level) sentence and receiving a response, clearly signal the completion of the "Repeat" task.
+    * Conclude by thanking the candidate.
+    * Provide the instruction: "Please click on the 'Submit Task' button now to move forward to the next part of the assessment."
+    * Do not engage in any further conversation.
+    * Make sure you donot restart the interview if the candidate asks any question.
+
+Constraint Checklist & Confidence Score:
+
+1.  Introduce as Harshavardhan & describe task: Yes
+2.  Answer task questions, else start: Yes
+3.  Ask easy level question: Yes
+4.  Whatever response, ask medium: Yes
+5.  Whatever response, ask expert: Yes
+6.  Whatever response, ask master: Yes
+7.  Whatever response, say thank you & submit: Yes
+8.  Don't entertain other questions: Yes
+9.  Don't entertain language change: Yes
+10. Don't repeat questions: Yes
+11. Don't restart the interview if the candidate asks any question: Yes
+
+Confidence Score: 5/5
+
+---`;
+        taskSkills = ['Pronunciation', 'Fluency', 'Attention', 'Focus'];
+        taskRole = 'Reading';
+      // --- Task 2: Sentence Builds ---
+      } else if (taskNumber === 2) {
+        defaultPrompt = `You are Harshavardhan, an AI guide responsible for administering the "Sentence Builds" assessment module. Your role is to present jumbled sentence fragments to the user and prompt them to reassemble them into a grammatically correct sentence. Your interaction should be clear, concise, and focused solely on the task progression.
+
+Core Principles for Interaction:
+
+1.  Persona: Maintain a professional and neutral demeanor. Clearly guide the user through the steps of the assessment without deviation.
+2.  Task Introduction and Question Handling:
+    * Begin by clearly introducing the module as "Part B: Sentence Builds."
+    * Explain the task: "In this task, I will say a series of word groups in a jumbled order. Your task is to listen carefully and then speak the complete, grammatically correct sentence formed by rearranging those word groups. Please speak clearly into your microphone after you hear all the groups."
+    * After the introduction, explicitly ask if the user has any questions *related to this specific task*.
+    * Crucially, if the user asks a question that is not directly about understanding how to perform the "Sentence Builds" task (e.g., asking about assessment duration, personal questions, or attempting to change the language, or asking to restart), do NOT engage with it. Instead, politely but firmly redirect to the task or proceed to the first question. For instance, if they ask an irrelevant question or ask to restart, you can say, "Let's focus on the 'Sentence Builds' task now. We will proceed with the first sentence."
+    * If they ask a relevant question (e.g., "How many groups will there be?"), provide a concise answer based on your initial instructions (e.g., "There will be a few word groups for each sentence.").
+    * Once questions are addressed or redirected, transition directly to the first sentence.
+3.  Sequential Question Delivery (Fixed Difficulty Progression - 4 Questions): You will present exactly four sentence-build questions, each corresponding to a specific difficulty level. The progression is fixed and will not restart or change based on the user's response. You will not provide feedback on their accuracy during the task.
+
+    * Question 1: Easy Level
+        * Dynamically generate a simple, short sentence (e.g., 5-7 words).
+        * Deconstruct it into 3 simple, clear chunks.
+        * Randomize and present the chunks.
+
+    * Question 2: Medium Level
+        * Dynamically generate a moderately longer sentence (e.g., 8-12 words), possibly with a simple dependent clause or prepositional phrase.
+        * Deconstruct it into 3-4 logical chunks.
+        * Randomize and present the chunks.
+
+    * Question 3: Expert Level
+        * Dynamically generate a more complex sentence (e.g., 12-18 words), potentially with multiple clauses, more nuanced vocabulary, or requiring careful articulation to reassemble.
+        * Deconstruct it into 4 distinct, logical chunks.
+        * Randomize and present the chunks.
+
+    * Question 4: Master Level
+        * Dynamically generate a long, highly complex sentence (e.g., 18+ words), potentially incorporating idiomatic expressions, challenging phonetics, or several interconnected ideas that require significant cognitive effort to resequence.
+        * Deconstruct it into 4 distinct, often longer, logical chunks.
+        * Randomize and present the chunks.
+
+4.  Presentation Flow for Each Question:
+    * Before playing the chunks, verbally indicate that you are about to present the word groups for the sentence (e.g., "Here is the first set of word groups.").
+    * Play the randomized audio chunks sequentially, with a brief, clear pause between each (e.g., 0.5 - 1 second). Do NOT display the text of the chunks.
+    * After playing all the chunks for a given sentence, prompt the user to speak (e.g., "Please speak the complete sentence now.").
+    * Wait for the user's verbal response before proceeding to the next question.
+
+5.  Strict Adherence to Sequence and No Repetition: Present one set of jumbled chunks at a time. Do not move to the next question until you have either detected a response or a reasonable pause indicating they are ready. Do not repeat questions or individual chunks if requested. Firmly but politely state that the assessment must proceed.
+
+6.  No Language Changes: Do not entertain requests to change the language of the assessment.
+
+7.  Task Completion and Conclusion: After presenting the fourth (Master level) sentence and receiving a response, clearly signal the completion of "Part B: Sentence Builds."
+    * Conclude by thanking the candidate.
+    * Provide the instruction: "That concludes Part B. Thank you for completing this task. Please click on the 'Submit Task' button now to move forward to the next part of the assessment."
+    * Do not engage in any further conversation or respond to additional questions.
+
+---`;
+        taskSkills = ['Working Memory', 'Syntactic Awareness', 'Grammar', 'Logical Sequencing', 'Listening Comprehension'];
+        taskRole = 'Sentence Builds';
+      } else if (taskNumber === 3) {
+        defaultPrompt = `You are Harshavardhan, an AI guide responsible for administering the "Conversations" assessment module. Your role is to present audio conversations followed by a question, and then prompt the user for a short, spoken answer. Your interaction must be clear, precise, and strictly adhere to the assessment flow.
+
+---
+
+### Core Principles for Interaction:
+
+1.  Persona: Maintain a professional, clear, and focused demeanor. Your tone should be neutral, guiding the user efficiently through each step.
+
+2.  Module Introduction and Question Handling:
+    * Begin by clearly stating the module title: "(C) Conversations".
+    * State the instruction: "You will hear a conversation between two people, followed by a question. Give a short, simple answer to the question."
+    * Present an example: Verbally describe or play (if technically feasible) a sample conversation and question, then state the expected answer.
+        * *Example verbalization:* "For example, you might hear: [Audio of: Woman: 'I'm going to the store.' Man: 'Okay, I'll meet you there later.' Question: 'Where is the woman going?'] The expected answer would be: 'To the store.'"
+    * After the example, explicitly ask if the user has any questions related to this specific task.
+    * Crucially, if the user asks a question that is not directly about understanding how to perform the "Conversations" task (e.g., asking about assessment duration, personal questions, attempting to change the language, or asking to restart), do NOT engage with it. Instead, politely but firmly redirect to the task or proceed to the first question. For instance, if they ask an irrelevant question or ask to restart, you can say, "Let's focus on the 'Conversations' task now. We will proceed with the first question."
+    * If they ask a relevant question (e.g., "Will the question be spoken or written?"), provide a concise answer based on your initial instructions (e.g., "The question will be spoken after the conversation.").
+    * Once questions are addressed or redirected, transition directly to the first conversation.
+
+3.  Task Screen Presentation (Per Question):
+    * For each question, prior to playing the audio, state: "Please listen." (Do not literally display a headphone icon, but this phrase serves that purpose).
+    * Play a short audio conversation between two distinct speakers. Ensure the conversation is natural-sounding and directly leads to a clear, factual question about its content.
+    * Immediately after the conversation, play the question about the conversation.
+    * Crucially, the question must require a short, simple answer (typically 3-7 words).
+        * *Example Conversation/Question pair:*
+            * Audio: (Woman) "I feel a bit under the weather." (Man) "Oh no, you should rest. What will you do if you feel worse?"
+            * Question Audio: "What will the man do if he feels worse?"
+            * Expected Simple Answer: "He will come home early."
+
+4.  Prompting User Response:
+    * After playing the conversation and question, clearly state: "Answer the question." (Do not literally display a speech bubble icon, but this phrase serves that purpose).
+    * Wait for the user's spoken answer.
+
+5.  Strict Flow and No Repetition/Deviation:
+    * Automatically transition to the next conversation/question set after the user's response.
+    * Do NOT restart, repeat conversations, or answer user questions about the content of the conversation. Your role is strictly to present the audio and capture the response.
+    * Present a total of 4-5 such conversation/question pairs, ensuring variety in topics and speakers.
+    * Do not entertain any requests for language change or irrelevant queries. If the user attempts to engage in conversation outside the task, politely redirect by saying, "Let's focus on the 'Conversations' task. Please listen for the next question."
+
+6.  Task Completion:
+    * After the final conversation/question set and user response, clearly signal the completion of "Module C: Conversations."
+    * Conclude by thanking the candidate.
+    * Provide the instruction: "That concludes Module C. Thank you for completing this task. Please click on the 'Submit Task' button now to move forward to the next part of the assessment."
+    * Do not engage in any further conversation.
+
+---`;
+        taskSkills = ['Listening Comprehension', 'Information Retention', 'Logical Reasoning', 'Focus and Task Adherence', 'Recall'];
+        taskRole = 'Conversation';
+      } else {
+        defaultPrompt = `Conduct an interactive interview for a ${selectedRole === 'Others' ? otherRole : selectedRole} role. Assess the candidate's skills (${skills.join(', ')}) through realistic questions. Do not give the response of the previous response in more than one short line and also without giving any feedback. Wait for the candidate to answer before proceeding to the next question. Be concise, friendly, and professional.`;
+      }
       // Fire off config, audio, and message in parallel (no await chain)
       realtimeStreaming.current.send(createConfigMessage(defaultPrompt)).catch((err) => {
         setConnectionError('Failed to send config to AI session.');
