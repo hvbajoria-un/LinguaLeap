@@ -78,7 +78,7 @@ export const TaskRoom: React.FC<TaskRoomProps> = ({
   const [finalReportReady, setFinalReportReady] = useState(!!getFinalReport());
   const [completedTasks, setCompletedTasks] = useState<number[]>([]);
 
-  // Reset all state when taskNumber or location changes (new task)
+  // Reset all state and re-request camera when taskNumber or location changes (new task)
   useEffect(() => {
     setIsTaskStarted(false);
     setIsTaskEnded(false);
@@ -87,6 +87,8 @@ export const TaskRoom: React.FC<TaskRoomProps> = ({
     setCurrentSpeaker(null);
     setConnectionError(null);
     setDetailedError(null);
+    // Re-request camera for every new task
+    requestVideoPermissions();
     // Optionally, clear audio/video refs if needed
   }, [taskNumber, location.key]);
 
@@ -770,7 +772,7 @@ Core Principles for Interaction:
               </div>
             </div>
             {/* Transcript Panel */}
-            {showTranscript && (
+            {taskNumber > 3 && showTranscript && (
               <div className="w-1/3 h-full bg-[#101c33] border-l border-[#1a2942] flex flex-col">
                 <div className="px-6 py-4 border-b border-[#1a2942] text-lg font-semibold flex-shrink-0">Transcript</div>
                 <div ref={transcriptPanelRef} className="flex-1 overflow-y-auto p-6 space-y-4">
@@ -814,13 +816,15 @@ Core Principles for Interaction:
         ) : (
           <Button className="bg-green-600 hover:bg-green-700 text-lg px-8 py-3 rounded-lg font-semibold" onClick={endTask} disabled={isTaskEnded}>End Task</Button>
         )}
-        <button
-          className={`ml-2 p-3 rounded-lg ${showTranscript ? 'bg-blue-800 text-white' : 'bg-[#16243a] text-blue-200'} hover:bg-blue-700 transition-all`}
-          onClick={handleTranscriptToggle}
-          aria-label="Toggle Transcript"
-        >
-          <FaClosedCaptioning size={28} />
-        </button>
+        {taskNumber > 3 && (
+          <button
+            className={`ml-2 p-3 rounded-lg ${showTranscript ? 'bg-blue-800 text-white' : 'bg-[#16243a] text-blue-200'} hover:bg-blue-700 transition-all`}
+            onClick={handleTranscriptToggle}
+            aria-label="Toggle Transcript"
+          >
+            <FaClosedCaptioning size={28} />
+          </button>
+        )}
       </div>
     </div>
   );
