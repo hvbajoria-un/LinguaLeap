@@ -12,6 +12,7 @@ import { Camera, CameraOff, PhoneOff } from 'lucide-react';
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { useInterviewStore } from '../store/interviewStore';
 import { useInterviewMetaStore } from '../store/interviewStore';
+import { useAssessmentTimerStore } from '../store/interviewStore';
 
 interface TaskRoomProps {
   taskNumber: number;
@@ -39,6 +40,7 @@ export const TaskRoom: React.FC<TaskRoomProps> = ({
   userName,
   transcript: initialTranscript = [],
 }) => {
+  // All hooks at the top
   const [showTranscript, setShowTranscript] = useState(false);
   const [currentSpeaker, setCurrentSpeaker] = useState<'interviewer' | 'candidate' | null>(null);
   const [isTaskStarted, setIsTaskStarted] = useState(false);
@@ -57,10 +59,10 @@ export const TaskRoom: React.FC<TaskRoomProps> = ({
   const videoRef = useRef<HTMLVideoElement>(null);
   const realtimeStreaming = useRef<LowLevelRTClient | null>(null);
   const location = useLocation();
+  const interviewMeta = useInterviewMetaStore();
   let {
     selectedRole, skills, otherRole, idealRating
   } = location.state || {};
-  const interviewMeta = useInterviewMetaStore();
   if (!selectedRole || !skills) {
     selectedRole = interviewMeta.selectedRole;
     skills = interviewMeta.skills;
@@ -70,23 +72,45 @@ export const TaskRoom: React.FC<TaskRoomProps> = ({
   const [isStarting, setIsStarting] = useState(false);
   const audioPlayer = useRef<Player | null>(null);
   const audioRecorder = useRef<Recorder | null>(null);
-  // Store the last received report for this task
   const lastTaskReportRef = useRef<any>(null);
   const { setFinalReport, getFinalReport } = useMultiTaskInterviewStore();
   const { addPastInterview } = useInterviewStore();
   const [isGeneratingFinalReport, setIsGeneratingFinalReport] = useState(false);
   const [finalReportReady, setFinalReportReady] = useState(!!getFinalReport());
   const [completedTasks, setCompletedTasks] = useState<number[]>([]);
+  const isTypedTask = taskNumber >= 4 && taskNumber <= 6;
+  const [typedAnswer, setTypedAnswer] = useState('');
+  const [isAwaitingUserInput, setIsAwaitingUserInput] = useState(false);
+  const [isTimerRunning, setIsTimerRunning] = useState(false);
+  const [timeRemaining, setTimeRemaining] = useState(30);
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const blockAIAudioRef = useRef(false);
+  const {
+    assessmentTimeLeft,
+    assessmentTimerActive,
+    setAssessmentTimeLeft,
+    setAssessmentTimerActive,
+    resetAssessmentTimer
+  } = useAssessmentTimerStore();
+  const assessmentTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const assessmentTimeLeftRef = useRef(assessmentTimeLeft);
+  useEffect(() => { assessmentTimeLeftRef.current = assessmentTimeLeft; }, [assessmentTimeLeft]);
 
   // Reset all state and re-request camera when taskNumber or location changes (new task)
   useEffect(() => {
     setIsTaskStarted(false);
     setIsTaskEnded(false);
     setTranscript([]);
-    setShowTranscript(false);
+    if (taskNumber === 4 || taskNumber === 5 || taskNumber === 6) {
+      setShowTranscript(true);
+    } else {
+      setShowTranscript(false);
+    }
     setCurrentSpeaker(null);
     setConnectionError(null);
     setDetailedError(null);
+    // Reset timer state for new task
+    stopTimer();
     // Re-request camera for every new task
     requestVideoPermissions();
     // Optionally, clear audio/video refs if needed
@@ -112,6 +136,7 @@ export const TaskRoom: React.FC<TaskRoomProps> = ({
       if (audioRecorder.current) audioRecorder.current.stop();
       if (audioPlayer.current) audioPlayer.current.clear();
       if (realtimeStreaming.current) try { realtimeStreaming.current.close(); } catch {}
+      stopTimer();
     };
     // eslint-disable-next-line
   }, []);
@@ -203,7 +228,7 @@ export const TaskRoom: React.FC<TaskRoomProps> = ({
           silence_duration_ms: 1400,
           type: 'server_vad',
         },
-        temperature: 0.6,
+        temperature: 1.1,
       },
     };
   }
@@ -222,7 +247,10 @@ export const TaskRoom: React.FC<TaskRoomProps> = ({
           const binary = atob(message.delta);
           const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
           const pcmData = new Int16Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 2);
-          audioPlayer.current?.play(pcmData);
+          // Block all AI audio playback if 'submit task' was detected
+          if (!blockAIAudioRef.current) {
+            audioPlayer.current?.play(pcmData);
+          }
           break;
         }
         case 'input_audio_buffer.speech_started':
@@ -251,8 +279,26 @@ export const TaskRoom: React.FC<TaskRoomProps> = ({
             transcript = item.content[0].transcript;
           }
           if (transcript) {
+            // Block all AI audio playback if 'submit task' is present
+            if (/submit task/i.test(transcript)) {
+              blockAIAudioRef.current = true;
+            } else {
+              blockAIAudioRef.current = false;
+            }
             addMessage('interviewer', transcript);
             lastTaskReportRef.current = transcript;
+            // Auto-submit if AI says 'submit task'
+            if (/submit task/i.test(transcript) && !isTaskEnded) {
+              endTask();
+            }
+            // Check for "30 seconds" in Task 6 and start timer
+            if (taskNumber === 6 && transcript.toLowerCase().includes('30 seconds')) {
+              startTimer(30);
+            }
+          }
+          // For typed tasks, now expect user input (but not for Task 6 when timer is running)
+          if (isTypedTask && !(taskNumber === 6 && isTimerRunning)) {
+            setIsAwaitingUserInput(true);
           }
           break;
         }
@@ -266,6 +312,53 @@ export const TaskRoom: React.FC<TaskRoomProps> = ({
     setShowTranscript((prev) => !prev);
   };
 
+  // Timer function for Task 6
+  const startTimer = (duration: number) => {
+    setIsTimerRunning(true);
+    setTimeRemaining(duration);
+    
+    timerRef.current = setInterval(() => {
+      setTimeRemaining((prev) => {
+        if (prev <= 1) {
+          // Timer finished, send "done" automatically
+          if (realtimeStreaming.current) {
+            realtimeStreaming.current.send({
+              type: 'conversation.item.create',
+              item: {
+                type: 'message',
+                role: 'user',
+                content: [
+                  { type: 'input_text', text: 'done' }
+                ]
+              }
+            }).catch((err) => {
+              console.error('[TaskRoom] Auto-send done error:', err);
+            });
+            realtimeStreaming.current.send({ type: 'response.create' }).catch((err) => {
+              console.error('[TaskRoom] Auto-send response.create error:', err);
+            });
+          }
+          setIsTimerRunning(false);
+          if (timerRef.current) {
+            clearInterval(timerRef.current);
+            timerRef.current = null;
+          }
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  };
+
+  const stopTimer = () => {
+    setIsTimerRunning(false);
+    setTimeRemaining(30);
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+  };
+
   // Ripple animation classes
   const rippleClass =
     'relative before:content-["" ] before:absolute before:inset-0 before:rounded-2xl before:border-4 before:border-blue-500 before:animate-pulse before:pointer-events-none';
@@ -277,8 +370,8 @@ export const TaskRoom: React.FC<TaskRoomProps> = ({
   const generateTaskReportNonBlocking = (taskNum: number, transcriptData: any) => {
     let isCancelled = false;
     // Use the full transcript as-is for Gemini
-    let taskSkills = skills;
-    let taskRole = selectedRole === 'Others' ? otherRole : selectedRole;
+    let taskSkills: string[];
+    let taskRole: string;
     if (taskNum === 1) {
       taskSkills = ['Pronunciation', 'Fluency', 'Attention', 'Focus'];
       taskRole = 'Reading';
@@ -289,14 +382,17 @@ export const TaskRoom: React.FC<TaskRoomProps> = ({
       taskSkills = ['Listening Comprehension', 'Information Retention', 'Logical Reasoning', 'Focus and Task Adherence', 'Recall'];
       taskRole = 'Conversation';
     } else if (taskNum === 4) {
-      taskSkills = ['Pronunciation', 'Fluency', 'Attention', 'Focus'];
-      taskRole = 'Reading';
+      taskSkills = ['Vocabulary', 'Contextual Understanding', 'Word Appropriateness', 'Grammatical Fit', 'Spelling Accuracy'];
+      taskRole = 'Sentence Completion';
     } else if (taskNum === 5) {
-      taskSkills = ['Working Memory', 'Syntactic Awareness', 'Grammar', 'Logical Sequencing', 'Listening Comprehension'];
-      taskRole = 'Sentence Builds';
+      taskSkills = ['Listening Accuracy', 'Spelling Proficiency', 'Punctuation Awareness', 'Typing Accuracy', 'Grammar and Sentence Structure Recognition'];
+      taskRole = 'Dictation';
     } else if (taskNum === 6) {
-      taskSkills = ['Listening Comprehension', 'Information Retention', 'Logical Reasoning', 'Focus and Task Adherence', 'Recall'];
-      taskRole = 'Conversations';
+      taskSkills = ['Reading Comprehension', 'Paraphrasing', 'Content Accuracy', 'Written Expression', 'Time Management'];
+      taskRole = 'Passage Reconstruction';
+    } else {
+      taskSkills = skills;
+      taskRole = selectedRole === 'Others' ? otherRole : selectedRole;
     }
     const taskJson = {
       role: taskRole,
@@ -314,7 +410,7 @@ export const TaskRoom: React.FC<TaskRoomProps> = ({
       systemInstruction,
     });
     const generationConfig = {
-      temperature: 0.35,
+      temperature: 0.55,
       responseMimeType: "application/json",
     };
     (async () => {
@@ -375,7 +471,7 @@ export const TaskRoom: React.FC<TaskRoomProps> = ({
       systemInstruction,
     });
     const generationConfig = {
-      temperature: 0.35,
+      temperature: 0.55,
       responseMimeType: "application/json",
     };
     try {
@@ -444,9 +540,10 @@ export const TaskRoom: React.FC<TaskRoomProps> = ({
     if (audioPlayer.current) audioPlayer.current.clear();
     if (realtimeStreaming.current) try { realtimeStreaming.current.close(); } catch {}
     setCompletedTasks((prev) => [...prev, taskNumber]);
-    if (taskNumber < totalTasks) {
+    if (taskNumber < 6) {
       navigate(`/interview-room/task/${taskNumber + 1}`);
     } else {
+      // Show loader and wait for Gemini API to finish before navigating
       setIsGeneratingFinalReport(true);
       await generateFinalReport();
       setIsGeneratingFinalReport(false);
@@ -469,7 +566,6 @@ export const TaskRoom: React.FC<TaskRoomProps> = ({
     setConnectionError(null);
     setDetailedError(null);
     try {
-      // Camera/mic already started on mount
       startTimeStamp = new Date();
       setIsTaskStarted(true);
       // Setup AI session
@@ -478,7 +574,7 @@ export const TaskRoom: React.FC<TaskRoomProps> = ({
       const deploymentOrModel = "gpt-4o-mini-realtime-preview";
       realtimeStreaming.current = new LowLevelRTClient(new URL(endpoint), { key }, { deployment: deploymentOrModel });
       // Use robust config and prompt
-      let defaultPrompt;
+      let defaultPrompt = '';
       let taskSkills = skills;
       let taskRole = selectedRole === 'Others' ? otherRole : selectedRole;
       // --- Task 1: Repeat Task ---
@@ -493,8 +589,8 @@ Core Principles for Interaction:
     * Clearly describe the "Repeat" task: "I will say a sentence, and your task is to repeat it exactly as you hear it. Please speak clearly into your microphone immediately after you hear each sentence."
 3.  Question Handling (Strictly Task-Related):
     * After the introduction, explicitly ask if the user has any questions *related to the task*.
-    * Crucially, if the user asks a question that is not directly about understanding how to perform the "Repeat" task (e.g., asking about assessment duration, personal questions, or attempting to change the language), do NOT engage with it. Instead, politely but firmly redirect to the task or proceed to the first question. For instance, if they ask an irrelevant question, you can say, "Let's focus on the 'Repeat' task now. Are you ready to begin?"
-    * If they ask a relevant question (e.g., "Do I need to speak immediately?"), provide a concise answer based on your initial instructions.
+    * Crucially, if the user asks a question that is not directly about understanding the "Repeat" task, do NOT engage with it. Instead, politely but firmly redirect to the task or proceed to the first question. For instance, if they ask an irrelevant question, you can say, "Please focus on the 'Repeat' task now. Are you ready to begin?"
+    * If they ask a relevant question, provide a concise answer based on your initial instructions.
     * Once questions are addressed or redirected, transition directly to the first sentence.
 4.  Sequential Question Delivery (Fixed Progression): You will present exactly four sentences, each corresponding to a specific difficulty level. The progression is fixed regardless of the user's previous response. You will not provide feedback on their accuracy during the task.
     * Easy Level Sentence: Present a simple, short sentence.
@@ -523,8 +619,6 @@ Constraint Checklist & Confidence Score:
 10. Don't repeat questions: Yes
 11. Don't restart the interview if the candidate asks any question: Yes
 
-Confidence Score: 5/5
-
 ---`;
         taskSkills = ['Pronunciation', 'Fluency', 'Attention', 'Focus'];
         taskRole = 'Reading';
@@ -539,34 +633,42 @@ Core Principles for Interaction:
     * Begin by clearly introducing the module as "Part B: Sentence Builds."
     * Explain the task: "In this task, I will say a series of word groups in a jumbled order. Your task is to listen carefully and then speak the complete, grammatically correct sentence formed by rearranging those word groups. Please speak clearly into your microphone after you hear all the groups."
     * After the introduction, explicitly ask if the user has any questions *related to this specific task*.
-    * Crucially, if the user asks a question that is not directly about understanding how to perform the "Sentence Builds" task (e.g., asking about assessment duration, personal questions, or attempting to change the language, or asking to restart), do NOT engage with it. Instead, politely but firmly redirect to the task or proceed to the first question. For instance, if they ask an irrelevant question or ask to restart, you can say, "Let's focus on the 'Sentence Builds' task now. We will proceed with the first sentence."
-    * If they ask a relevant question (e.g., "How many groups will there be?"), provide a concise answer based on your initial instructions (e.g., "There will be a few word groups for each sentence.").
+    * Crucially, if the user asks a question that is not directly about understanding  the "Sentence Builds" task, do NOT engage with it. Instead, politely but firmly redirect to the task or proceed to the first question. For instance, if they ask an irrelevant question or ask to restart, you can say, "Please focus on the 'Sentence Builds' task now. We will proceed with the first sentence."
+    * If they ask a relevant question, provide a concise answer based on your initial instructions.
     * Once questions are addressed or redirected, transition directly to the first sentence.
 3.  Sequential Question Delivery (Fixed Difficulty Progression - 4 Questions): You will present exactly four sentence-build questions, each corresponding to a specific difficulty level. The progression is fixed and will not restart or change based on the user's response. You will not provide feedback on their accuracy during the task.
 
     * Question 1: Easy Level
         * Dynamically generate a simple, short sentence (e.g., 5-7 words).
-        * Deconstruct it into 3 simple, clear chunks.
+        * Deconstruct it into 3 simple, clear chunks which are randomized.
         * Randomize and present the chunks.
+        * Donot give any information about the sentence or any feedback about the sentence.
+        * Move to the next question after the user has spoken the sentence.
 
     * Question 2: Medium Level
         * Dynamically generate a moderately longer sentence (e.g., 8-12 words), possibly with a simple dependent clause or prepositional phrase.
-        * Deconstruct it into 3-4 logical chunks.
+        * Deconstruct it into 3 - 5 random chunks.
         * Randomize and present the chunks.
+        * Donot give any information about the sentence or any feedback about the sentence.
+        * Move to the next question after the user has spoken the sentence.
 
     * Question 3: Expert Level
         * Dynamically generate a more complex sentence (e.g., 12-18 words), potentially with multiple clauses, more nuanced vocabulary, or requiring careful articulation to reassemble.
-        * Deconstruct it into 4 distinct, logical chunks.
+        * Deconstruct it into 6-7 distinct, logical, randomized chunks.
         * Randomize and present the chunks.
+        * Donot give any information about the sentence or any feedback about the sentence.
+        * Move to the next question after the user has spoken the sentence.
 
     * Question 4: Master Level
         * Dynamically generate a long, highly complex sentence (e.g., 18+ words), potentially incorporating idiomatic expressions, challenging phonetics, or several interconnected ideas that require significant cognitive effort to resequence.
-        * Deconstruct it into 4 distinct, often longer, logical chunks.
+        * Deconstruct it into 7-9 distinct, often longer, logical chunks, randomized chunks.
         * Randomize and present the chunks.
+        * Donot give any information about the sentence or any feedback about the sentence.
+        * End the task after the user has spoken the sentence.
 
 4.  Presentation Flow for Each Question:
     * Before playing the chunks, verbally indicate that you are about to present the word groups for the sentence (e.g., "Here is the first set of word groups.").
-    * Play the randomized audio chunks sequentially, with a brief, clear pause between each (e.g., 0.5 - 1 second). Do NOT display the text of the chunks.
+    * Play the randomized audio chunks one after the other, with a brief, clear pause between each (e.g., 0.2-0.5 second). Do NOT display the text of the chunks.
     * After playing all the chunks for a given sentence, prompt the user to speak (e.g., "Please speak the complete sentence now.").
     * Wait for the user's verbal response before proceeding to the next question.
 
@@ -597,25 +699,25 @@ Core Principles for Interaction:
     * Present an example: Verbally describe or play (if technically feasible) a sample conversation and question, then state the expected answer.
         * *Example verbalization:* "For example, you might hear: [Woman: 'I'm going to the store.' Man: 'Okay, I'll meet you there later.' Question: 'Where is the woman going?'] The expected answer would be: 'To the store.'"
     * After the example, explicitly ask if the user has any questions related to this specific task.
-    * Crucially, if the user asks a question that is not directly about understanding how to perform the "Conversations" task (e.g., asking about assessment duration, personal questions, attempting to change the language, or asking to restart), do NOT engage with it. Instead, politely but firmly redirect to the task or proceed to the first question. For instance, if they ask an irrelevant question or ask to restart, you can say, "Let's focus on the 'Conversations' task now. We will proceed with the first question."
-    * If they ask a relevant question (e.g., "Will the question be spoken or written?"), provide a concise answer based on your initial instructions (e.g., "The question will be spoken after the conversation.").
+    * Crucially, if the user asks a question that is not directly about understanding  the "Conversations" task, do NOT engage with it. Instead, politely but firmly redirect to the task or proceed to the first question. For instance, if they ask an irrelevant question or ask to restart, you can say, "Let's focus on the 'Conversations' task now. We will proceed with the first question."
+    * If they ask a relevant question, provide a concise answer based on your initial instructions.
     * Once questions are addressed or redirected, transition directly to the first conversation.
 
 3.  Task Screen Presentation (Per Question):
-    * For each question, prior to playing the audio, state: "Please listen." (Do not literally display a headphone icon, but this phrase serves that purpose).
-    * Play a short audio conversation between two distinct speakers. Ensure the conversation is natural-sounding and directly leads to a clear, factual question about its content.
-    * Immediately after the conversation, play the question about the conversation.
+    * For each question, prior to presenting the conversation, state: "Please listen.".
+    * Present a short conversation between two distinct speakers. Ensure the conversation is natural-sounding and directly leads to a clear, factual question about its content.
+    * Immediately after the conversation, ask the question about the conversation.
     * Crucially, the question must require a short, simple answer (typically 3-7 words).
 
 4.  Prompting User Response:
-    * After playing the conversation and question, clearly state: "Answer the question." (Do not literally display a speech bubble icon, but this phrase serves that purpose).
+    * After playing the conversation and question, clearly state: "Answer the question.".
     * Wait for the user's spoken answer.
 
 5.  Strict Flow and No Repetition/Deviation:
     * Automatically transition to the next conversation/question set after the user's response.
     * Do NOT restart, repeat conversations, or answer user questions about the content of the conversation. Your role is strictly to present the audio and capture the response.
     * Present a total of 4-5 such conversation/question pairs, ensuring variety in topics and speakers.
-    * Do not entertain any requests for language change or irrelevant queries. If the user attempts to engage in conversation outside the task, politely redirect by saying, "Let's focus on the 'Conversations' task. Please listen for the next question."
+    * Do not entertain any requests for language change or irrelevant queries. If the user attempts to engage in conversation outside the task, politely redirect by saying, "Please focus on the 'Conversations' task. Please listen for the next question."
 
 6.  Task Completion:
     * After the final conversation/question set and user response, clearly signal the completion of "Module C: Conversations."
@@ -626,8 +728,141 @@ Core Principles for Interaction:
 ---`;
         taskSkills = ['Listening Comprehension', 'Information Retention', 'Logical Reasoning', 'Focus and Task Adherence', 'Recall'];
         taskRole = 'Conversation';
-      } else {
-        defaultPrompt = `Conduct an interactive interview for a ${selectedRole === 'Others' ? otherRole : selectedRole} role. Assess the candidate's skills (${skills.join(', ')}) through realistic questions. Do not give the response of the previous response in more than one short line and also without giving any feedback. Wait for the candidate to answer before proceeding to the next question. Be concise, friendly, and professional.`;
+      } else if (taskNumber === 4) {
+        defaultPrompt = `You are Harshavardhan, an AI guide responsible for administering the "Sentence Completion" assessment module. Your role is to present incomplete sentences to the user and prompt them to type a single word to complete each sentence. Your interaction must be clear, precise, and strictly adhere to the assessment flow.
+
+---
+
+### Core Principles for Interaction:
+
+1.  Persona: Maintain a professional, clear, and focused demeanor. Your tone should be neutral, guiding the user efficiently through each step.
+
+2.  Module Introduction and Question Handling:
+    * Begin by clearly stating the module title: "(D) Sentence Completion".
+    * State the instruction: "Please type one word that fits the meaning of the sentence. You will have 25 seconds for each sentence. You will see a timer. Please click 'Submit' when you are finished with each sentence."
+    * Present an example: Verbally describe the example as it would appear on a screen.
+        * *Example verbalization:* "For example, you might see the sentence: 'It's ______ tonight. Bring your sweater.' You would then type the word 'cold' to complete the sentence."
+    * After the example, jsut ask the user "Are you ready to begin?"
+    * Crucially, if the user asks a question that is not directly about understanding  the "Sentence Completion" task, do NOT engage with it. Instead, politely but firmly redirect to the task or proceed to the first question. For instance, if they ask an irrelevant question or ask to restart, you can say, "Let's focus on the 'Sentence Completion' task now. We will proceed with the first sentence."
+    * If they ask a relevant question, provide a concise answer based on your instructions (e.g., "Please click the 'Submit' button after typing your word.").
+    * Once questions are addressed or redirected, transition directly to the first sentence completion task.
+
+3.  Task Screen Presentation (Per Question):
+    * For each question, prior to presenting the sentence, state: "Complete the sentence."
+    * Present an incomplete sentence with a single blank space. The sentence should require a single, contextually appropriate word to complete its meaning.
+    * Simulate the presence of a 25-second countdown timer. (As an AI, you cannot literally display a timer, but your internal logic should adhere to this time limit if controlling external elements).
+    * After presenting the sentence, pause briefly to allow the user to read and process.
+    * Instruct the user to type their response and click 'Submit'. (e.g., "Please type your word in the text box, then click 'Submit' to submit and move on.").
+    * Note: As an AI, you will be waiting for the user's typed input, which implies the user interface handles the typing and the 'Submit' button. Your role is to guide them verbally.
+
+4.  Strict Flow and No Repetition/Deviation:
+    * Do NOT restart, repeat sentences, or answer user questions about the meaning of specific words or sentences. Your role is strictly to present the task and await the typed response.
+    * Present a total of 4-5 such sentence completion questions, varying in complexity and vocabulary ranging from easy, medium, hard and master level.
+    * Do not entertain any requests for language change or irrelevant queries. If the user attempts to engage in conversation outside the task, politely redirect by saying, "Please focus on the 'Sentence Completion' task. Complete the current sentence."
+
+5.  Task Completion:
+    * After the final sentence completion task and user input, clearly signal the completion of "Module D: Sentence Completion."
+    * Conclude by thanking the candidate.
+    * Provide the instruction: "That concludes Module D. Thank you for completing this task. Please click on the 'Submit Task' button now to move forward to the next part of the assessment."
+    * Do not engage in any further conversation.
+---`;
+        taskSkills = ['Vocabulary', 'Contextual Understanding', 'Word Appropriateness', 'Grammatical Fit', 'Spelling Accuracy'];
+        taskRole = 'Sentence Completion';
+      } else if (taskNumber === 5) {
+        defaultPrompt = `You are Harshavardhan, an AI guide responsible for administering the "Dictation" assessment module. Your role is to speak sentences clearly for the user to transcribe. Your interaction must be precise, and strictly adhere to the assessment flow, focusing on the dictation task.
+
+---
+
+### Core Principles for Interaction:
+
+1.  Persona: Maintain a professional, clear, and focused demeanor. Your tone should be neutral and direct, guiding the user efficiently through each step.
+
+2.  Module Introduction and Question Handling:
+    * Begin by clearly stating the module title: "(E) Dictation".
+    * State the instruction: "Please type each sentence exactly as you hear it. You will have 25 seconds for each sentence. Pay close attention to spelling and punctuation. You will see a timer. Please click 'Submit' when you are finished."
+    * Present an example: Verbally describe the example as it would appear, indicating both the spoken audio and the expected typed response.
+    * After the example, explicitly ask if the user has any questions related to this specific task.
+    * Crucially, if the user asks a question that is not directly about understanding  the "Dictation" task, do NOT engage with it. Instead, politely but firmly redirect to the task or proceed to the first sentence. For instance, if they ask an irrelevant question or ask to restart, you can say, "Please focus on the 'Dictation' task now. We will proceed with the first sentence."
+    * If they ask a relevant question, provide a concise answer based on your instructions.
+    * Once questions are addressed or redirected, transition directly to the first dictation task.
+
+3.  Task Screen Presentation (Per Question):
+    * For each question, prior to speaking the sentence, state: "Please listen.".
+    * Speak a clear, grammatically correct sentence. The sentences should vary in length and complexity, but be suitable for dictation within the time limit.
+    * Immediately after speaking the sentence, state: "Type what you heard."
+    * Simulate the presence of a text input field and a 25-second countdown timer.
+    * After prompting, allow the user time to type. You should be set to recognize a 'Next' command or automatically move on after the 25-second period.
+    * Note: As an AI, you will be waiting for the user's typed input, which implies the user interface handles the typing and the 'Submit' button. Your role is to guide them verbally.
+
+4.  Strict Flow and No Repetition/Deviation:
+    * Automatically transition to the next sentence after the user's input or the timer expires.
+    * Do NOT restart, repeat sentences, or answer user questions about the content of the sentence or specific words. Your role is strictly to present the sentence and await the typed response.
+    * Present a total of 4-5 such dictation sentences, ensuring variety in length and vocabulary ranging from easy, medium, hard and master level.
+    * Do not entertain any requests for language change or irrelevant queries. If the user attempts to engage in conversation outside the task, politely redirect by saying, "Let's focus on the 'Dictation' task. Please complete the current sentence."
+
+5.  Task Completion:
+    * After the final dictation sentence and user input, clearly signal the completion of "Module E: Dictation."
+    * Conclude by thanking the candidate.
+    * Provide the instruction: "That concludes Module E. Thank you for completing this task. Please click on the 'Submit Task' button now to move forward to the next part of the assessment."
+    * Do not engage in any further conversation.
+
+---`;
+        taskSkills = ['Listening Accuracy', 'Spelling Proficiency', 'Punctuation Awareness', 'Typing Accuracy', 'Grammar and Sentence Structure Recognition'];
+        taskRole = 'Dictation';
+      } else if (taskNumber === 6) {
+        defaultPrompt = `You are Harshavardhan, an AI guide responsible for administering the "Passage Reconstruction" assessment module. Your role is to guide the user through a timed reading and writing task, ensuring they understand the instructions and adhere to the time limits. Your interaction must be clear, precise, and strictly adhere to the assessment flow.
+        Give the output is simple text formatted wihh proper spacing. Do not show give in markdown format.
+
+---
+
+### Core Principles for Interaction:
+
+1.  Persona: Maintain a professional, clear, and focused demeanor. Your tone should be neutral and direct, guiding the user efficiently through each step.
+
+2.  Module Introduction and Question Handling:
+    * Begin by clearly stating the module title: "(F) Passage Reconstruction".
+    * State the instruction: "You will be given a passage which will also be shown in the side panel. After speaking, the paragraph will disappear from the screen. Then, you will have 90 seconds to reconstruct the paragraph. Show that you understood the passage by rewriting it in your own words. Your answer will be scored for clear and accurate content, not word-for-word memorization."
+    * Present an example: Verbally describe the example as it would appear, indicating both the passage read and the type of expected typed response.
+    * After the example, explicitly ask if the user has any questions related to this specific task.
+    * Crucially, if the user asks a question that is not directly about understanding  the "Passage Reconstruction" task, do NOT engage with it. Instead, politely but firmly redirect to the task or proceed to the first passage. For instance, if they ask an irrelevant question or ask to restart, you can say, "Please focus on the 'Passage Reconstruction' task now. We will proceed with the first passage."
+    * If they ask a relevant question, provide a concise answer based on your instructions.
+    * Once questions are addressed or redirected, transition directly to the first passage.
+
+3.  Task Presentation (Per Passage - 4 Questions of Varying Difficulty - Easy, Medium, Hard and Master Level): You will present exactly four passages, each increasing in complexity. The progression is fixed and will not restart or change based on the user's response. You will not provide feedback on their accuracy during the task.
+
+    * Question 1: Easy Level
+        * Present a very short, simple paragraph (2 sentences, simple vocabulary, clear main idea).
+
+    * Question 2: Medium Level
+        * Present a slightly longer paragraph (2-3 sentences), with a bit more detail or a simple conjunction linking ideas.
+        
+    * Question 3: Expert Level
+        * Present a paragraph (3-4 sentences) with more complex sentence structures, possibly including a subordinate clause or less common vocabulary.
+
+    * Question 4: Master Level
+        * Present a longer, highly complex paragraph (4+ sentences) with advanced vocabulary, intricate sentence structures, and potentially abstract concepts or multiple interconnected ideas that require careful comprehension and reconstruction.
+
+    * For each question:
+        * Display the passage to the user and just inform the user that they have 30 seconds and without any further instruction.
+        * After receiving a done text from the user, state: "You now have 90 seconds to reconstruct it in your own words. Please begin typing."
+        * Simulate the display of a text input field and a 90-second countdown timer..
+        * After 90 seconds (or when the user indicates completion by clicking 'Submit' if an external system supports it), acknowledge the end of the writing phase.
+
+4.  Strict Flow and No Repetition/Deviation:
+    * Automatically transition to the next task after the writing phase for each passage.
+    * Do NOT restart, repeat passages, or answer user questions about the content of the passage. Your role is strictly to manage the timed presentation and collection of the reconstructed text.
+    * Do not entertain any requests for language change or irrelevant queries. If the user attempts to engage in conversation outside the task, politely redirect by saying, "Let's focus on the 'Passage Reconstruction' task. Please complete the current reconstruction."
+    * Donot repeat the same passage.
+
+5.  Task Completion:
+    * After the final (Master level) passage reconstruction task and user input, clearly signal the completion of "Module F: Passage Reconstruction."
+    * Conclude by thanking the candidate.
+    * Provide the instruction: "That concludes Module F. Thank you for completing this task. Please click on the 'Submit Task' button now to move forward to the next part of the assessment."
+    * Do not engage in any further conversation.
+
+---`;
+        taskSkills = ['Reading Comprehension', 'Paraphrasing', 'Working Memory', 'Coherent Written Expression', 'Cognitive Load Handling'];
+        taskRole = 'Passage Reconstruction';
       }
       // Fire off config, audio, and message in parallel (no await chain)
       realtimeStreaming.current.send(createConfigMessage(defaultPrompt)).catch((err) => {
@@ -635,11 +870,22 @@ Core Principles for Interaction:
         setDetailedError(err?.message || String(err));
         console.error('[TaskRoom] Config send error:', err);
       });
-      resetAudio(true).catch((err) => {
-        setConnectionError('Failed to start audio.');
-        setDetailedError(err?.message || String(err));
-        console.error('[TaskRoom] Audio start error:', err);
-      });
+      // Initialize audio player for all tasks, but only start recording for non-typed tasks
+      if (isTypedTask) {
+        // For typed tasks, only initialize the audio player (no recording)
+        await resetAudio(false).catch((err) => {
+          setConnectionError('Failed to initialize audio player.');
+          setDetailedError(err?.message || String(err));
+          console.error('[TaskRoom] Audio player init error:', err);
+        });
+      } else {
+        // For voice tasks, initialize audio player and start recording
+        await resetAudio(true).catch((err) => {
+          setConnectionError('Failed to start audio.');
+          setDetailedError(err?.message || String(err));
+          console.error('[TaskRoom] Audio start error:', err);
+        });
+      }
       handleRealtimeMessages();
       // Send initial user message and response.create
       realtimeStreaming.current.send({
@@ -673,159 +919,432 @@ Core Principles for Interaction:
     setIsStarting(false);
   };
 
-  // Loader UI for final report generation after last task
-  if (isGeneratingFinalReport && taskNumber === totalTasks) {
-    return (
-      <div className="min-h-screen bg-[#0a1627] text-white flex flex-col items-center justify-center">
-        <div className="flex flex-col items-center gap-6">
-          <svg className="animate-spin h-16 w-16 text-blue-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
-          </svg>
-          <h2 className="text-2xl font-bold text-blue-200">Generating your detailed evaluation report...</h2>
-          <p className="text-blue-100 text-lg">This may take a few moments. Please wait while we analyze your interview performance.</p>
-        </div>
-      </div>
-    );
+  // Handler for submitting typed answer
+  const handleTypedAnswerSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!typedAnswer.trim() || !realtimeStreaming.current) return;
+    // Add to transcript
+    addMessage('candidate', typedAnswer.trim());
+    // Send to AI
+    await realtimeStreaming.current.send({
+      type: 'conversation.item.create',
+      item: {
+        type: 'message',
+        role: 'user',
+        content: [
+          { type: 'input_text', text: typedAnswer.trim() }
+        ]
+      }
+    });
+    await realtimeStreaming.current.send({ type: 'response.create' });
+    setTypedAnswer('');
+    setIsAwaitingUserInput(false);
+  };
+
+  // Start assessment timer when assessment starts
+  useEffect(() => {
+    if (isTaskStarted && !assessmentTimerActive) {
+      setAssessmentTimeLeft(15 * 60);
+      setAssessmentTimerActive(true);
+      if (assessmentTimerRef.current) clearInterval(assessmentTimerRef.current);
+      assessmentTimerRef.current = setInterval(() => {
+        if (assessmentTimeLeftRef.current <= 1) {
+          clearInterval(assessmentTimerRef.current!);
+          setAssessmentTimeLeft(0);
+          setAssessmentTimerActive(false);
+          if (isTaskStarted && !isTaskEnded) {
+            endTask();
+          }
+        } else {
+          setAssessmentTimeLeft(assessmentTimeLeftRef.current - 1);
+        }
+      }, 1000);
+    }
+    if (!isTaskStarted || isTaskEnded) {
+      if (assessmentTimerRef.current) {
+        clearInterval(assessmentTimerRef.current);
+        assessmentTimerRef.current = null;
+      }
+    }
+    return () => {
+      if (assessmentTimerRef.current) {
+        clearInterval(assessmentTimerRef.current);
+        assessmentTimerRef.current = null;
+      }
+    };
+  }, [isTaskStarted, isTaskEnded]);
+
+  // Format timer as HH:MM:SS
+  function formatAssessmentTimeLeft() {
+    const h = Math.floor(assessmentTimeLeft / 3600).toString().padStart(2, '0');
+    const m = Math.floor((assessmentTimeLeft % 3600) / 60).toString().padStart(2, '0');
+    const s = (assessmentTimeLeft % 60).toString().padStart(2, '0');
+    return `${h}:${m}:${s}`;
   }
 
-  return (
-    <div className="h-screen bg-[#0a1627] text-white flex flex-col">
-      {/* Header */}
-      <div className="flex items-center justify-between px-8 py-4 bg-[#101c33] border-b border-[#1a2942] flex-shrink-0">
-        <div className="flex items-center gap-4">
-          <img src="https://d8it4huxumps7.cloudfront.net/uploads/images/unstop/svg/unstop-logo-white.svg" alt="Unstop Logo" className="h-8" />
-          <span className="font-semibold text-lg truncate max-w-xs">Medical Representative</span>
-        </div>
-        <div className="flex items-center gap-2">
-          {[...Array(totalTasks)].map((_, i) => (
-            <button
-              key={i}
-              className={`px-4 py-1 rounded-full border font-semibold mx-1 flex items-center justify-center gap-1
-                ${i + 1 === taskNumber
-                  ? 'bg-blue-800 text-white border-blue-500'
-                  : completedTasks.includes(i + 1)
-                    ? 'bg-green-700 text-white border-green-500'
-                    : 'bg-[#16243a] text-blue-200 border-[#22345a]'}
-              `}
-              disabled
-            >
-              {completedTasks.includes(i + 1) ? <span className="mr-1">✓</span> : null}
-              {i + 1}
-            </button>
-          ))}
-        </div>
-        <div className="flex items-center gap-4">
-          <span className="bg-[#1a2942] px-4 py-2 rounded-lg font-mono text-lg">699 : 59 : 21</span>
-          <div className="flex items-center gap-2">
-            <img src={userImage} alt={userName} className="h-8 w-8 rounded-full object-cover" />
-            <div className="flex flex-col">
-              <span className="font-semibold text-sm">{userName}</span>
-              <span className="text-xs text-blue-200">harshavardhan@unstop.com</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Main Content */}
-      <div className="flex flex-1 h-0">
-        {connectionError && (
-          <div className="bg-red-700 text-white px-4 py-2 text-center font-bold">
-            {connectionError}
-            {detailedError && (
-              <div className="text-xs text-gray-200 mt-2 break-all">{detailedError}</div>
-            )}
-          </div>
-        )}
-        <div className="flex-1 flex flex-col h-full">
-          <div className="px-8 py-4 border-b border-[#1a2942] text-xl font-semibold flex-shrink-0">{taskTitle}</div>
-          <div className="flex flex-1 h-0 overflow-hidden">
-            {/* Video/Images */}
-            <div className={`flex-1 flex items-center justify-center gap-12 p-8 ${showTranscript ? 'w-2/3' : 'w-full'} h-full`}>
-              <div className="flex flex-col items-center">
-                <div className={`rounded-2xl overflow-hidden bg-[#16243a] w-[420px] h-[320px] flex items-center justify-center border-4 ${currentSpeaker === 'interviewer' ? rippleClass : 'border-blue-700'}`}>
-                  <img src={aiImage} alt={aiName} className="object-cover w-full h-full" />
-                  {/* Audio animation bars */}
-                  {currentSpeaker === 'interviewer' && (
-                    <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-1">
-                      {[1, 2, 3, 4].map((bar) => (
-                        <div key={bar} className="w-2 h-6 bg-blue-400 rounded animate-pulse" style={{ animationDelay: `${bar * 0.1}s` }} />
-                      ))}
-                    </div>
-                  )}
-                </div>
-                <span className="mt-2 text-base text-blue-200">{aiName}</span>
-              </div>
-              <div className="flex flex-col items-center">
-                <div className={`rounded-2xl overflow-hidden bg-[#16243a] w-[420px] h-[320px] flex items-center justify-center border-4 ${currentSpeaker === 'candidate' ? rippleClass : 'border-[#22345a]'}`}>
-                  <video ref={videoRef} autoPlay muted playsInline className="w-full h-full object-cover rounded-lg bg-gray-800" />
-                  {/* Audio animation bars */}
-                  {currentSpeaker === 'candidate' && (
-                    <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-1">
-                      {[1, 2, 3, 4].map((bar) => (
-                        <div key={bar} className="w-2 h-6 bg-blue-400 rounded animate-pulse" style={{ animationDelay: `${bar * 0.1}s` }} />
-                      ))}
-                    </div>
-                  )}
-                </div>
-                <span className="mt-2 text-base text-blue-200">{userName}</span>
-              </div>
-            </div>
-            {/* Transcript Panel */}
-            {taskNumber > 3 && showTranscript && (
-              <div className="w-1/3 h-full bg-[#101c33] border-l border-[#1a2942] flex flex-col">
-                <div className="px-6 py-4 border-b border-[#1a2942] text-lg font-semibold flex-shrink-0">Transcript</div>
-                <div ref={transcriptPanelRef} className="flex-1 overflow-y-auto p-6 space-y-4">
-                  {transcript.map((msg, idx) => {
-                    const isAI = msg.speaker === 'interviewer';
-                    const avatar = isAI ? (
-                      <img src={aiImage} alt={aiName} className="w-8 h-8 rounded-full object-cover border-2 border-blue-500 bg-gray-800" />
-                    ) : (
-                      userImage ? <img src={userImage} alt={userName} className="w-8 h-8 rounded-full object-cover border-2 border-blue-300 bg-gray-800" />
-                      : <div className="w-8 h-8 rounded-full bg-blue-300 flex items-center justify-center text-blue-900 font-bold">U</div>
-                    );
-                    return (
-                      <div key={idx} className={`flex ${isAI ? 'justify-start' : 'justify-end'} w-full`}>
-                        {isAI && <div className="mr-3 flex-shrink-0">{avatar}</div>}
-                        <div className={`max-w-[75%] flex flex-col ${isAI ? 'items-start' : 'items-end'}`}>
-                          <div className={`rounded-2xl px-4 py-2 shadow-md ${isAI ? 'bg-blue-900 text-white' : 'bg-[#22345a] text-blue-100'} whitespace-pre-line break-words text-base`}>
-                            {msg.message}
-                          </div>
-                          <div className="flex items-center gap-2 mt-1 text-xs text-blue-300">
-                            <span>{isAI ? aiName : userName || 'You'}</span>
-                            {msg.time && <span className="opacity-70">· {msg.time}</span>}
-                          </div>
-                        </div>
-                        {!isAI && <div className="ml-3 flex-shrink-0">{avatar}</div>}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Footer */}
-      <div className="flex items-center justify-center gap-4 py-6 bg-[#101c33] border-t border-[#1a2942] flex-shrink-0">
-        {!isTaskStarted ? (
-          <Button className="bg-blue-600 hover:bg-blue-700 text-lg px-8 py-3 rounded-lg font-semibold" onClick={startInterview} disabled={isStarting}>
-            {isStarting ? 'Starting...' : 'Start Interview'}
-          </Button>
-        ) : (
-          <Button className="bg-green-600 hover:bg-green-700 text-lg px-8 py-3 rounded-lg font-semibold" onClick={endTask} disabled={isTaskEnded}>End Task</Button>
-        )}
-        {taskNumber > 3 && (
-          <button
-            className={`ml-2 p-3 rounded-lg ${showTranscript ? 'bg-blue-800 text-white' : 'bg-[#16243a] text-blue-200'} hover:bg-blue-700 transition-all`}
-            onClick={handleTranscriptToggle}
-            aria-label="Toggle Transcript"
-          >
-            <FaClosedCaptioning size={28} />
-          </button>
-        )}
+  // Loader UI for final report generation after last task
+  const loaderUI = (
+    <div className="min-h-screen bg-[#0a1627] text-white flex flex-col items-center justify-center">
+      <div className="flex flex-col items-center gap-6">
+        <svg className="animate-spin h-16 w-16 text-blue-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
+        </svg>
+        <h2 className="text-2xl font-bold text-blue-200">Generating your detailed evaluation report...</h2>
+        <p className="text-blue-100 text-lg">This may take a few moments. Please wait while we analyze your interview performance.</p>
       </div>
     </div>
+  );
+
+  // For Q&A panel: get the latest AI message and the following user message
+  let latestQAPair: { ai?: typeof transcript[0]; user?: typeof transcript[0] } = {};
+  if ((taskNumber === 4 || taskNumber === 5 || taskNumber === 6) && transcript.length > 0) {
+    // Find the last AI message
+    for (let i = transcript.length - 1; i >= 0; i--) {
+      if (transcript[i].speaker === 'interviewer') {
+        latestQAPair.ai = transcript[i];
+        // Find the next user message after this AI message
+        for (let j = i + 1; j < transcript.length; j++) {
+          if (transcript[j].speaker === 'candidate') {
+            latestQAPair.user = transcript[j];
+            break;
+          }
+        }
+        break;
+      }
+    }
+  }
+
+  // On mount, if timer is already running, set isTaskStarted to true so timer continues
+  useEffect(() => {
+    if (assessmentTimerActive && assessmentTimeLeft > 0) {
+      setIsTaskStarted(true);
+    }
+  }, []);
+
+  // Start/stop global timer when assessmentTimerActive changes
+  useEffect(() => {
+    if (assessmentTimerActive) {
+      if (assessmentTimerRef.current) clearInterval(assessmentTimerRef.current);
+      assessmentTimerRef.current = setInterval(() => {
+        if (assessmentTimeLeftRef.current <= 1) {
+          clearInterval(assessmentTimerRef.current!);
+          setAssessmentTimeLeft(0);
+          setAssessmentTimerActive(false);
+        } else {
+          setAssessmentTimeLeft(assessmentTimeLeftRef.current - 1);
+        }
+      }, 1000);
+    } else {
+      if (assessmentTimerRef.current) {
+        clearInterval(assessmentTimerRef.current);
+        assessmentTimerRef.current = null;
+      }
+    }
+    return () => {
+      if (assessmentTimerRef.current) {
+        clearInterval(assessmentTimerRef.current);
+        assessmentTimerRef.current = null;
+      }
+    };
+  }, [assessmentTimerActive]);
+
+  // When timer reaches zero, auto-end the task if not already ended
+  useEffect(() => {
+    if (assessmentTimeLeft === 0 && assessmentTimerActive === false && isTaskStarted && !isTaskEnded) {
+      endTask();
+    }
+  }, [assessmentTimeLeft, assessmentTimerActive, isTaskStarted, isTaskEnded]);
+
+  // On start, only set timer active if not already running
+  useEffect(() => {
+    if (isTaskStarted && !assessmentTimerActive) {
+      setAssessmentTimeLeft(15 * 60);
+      setAssessmentTimerActive(true);
+    }
+  }, [isTaskStarted]);
+
+  return (
+    isGeneratingFinalReport && taskNumber === 6 ? loaderUI : (
+      <div className="h-screen bg-[#0a1627] text-white flex flex-col">
+        {/* Header */}
+        <div className="flex items-center justify-between px-8 py-4 bg-[#101c33] border-b border-[#1a2942] flex-shrink-0">
+          <div className="flex items-center gap-4">
+            <img src="https://d8it4huxumps7.cloudfront.net/uploads/images/unstop/svg/unstop-logo-white.svg" alt="Unstop Logo" className="h-8" />
+            <span className="font-semibold text-lg truncate max-w-xs">Lingua Leap</span>
+          </div>
+          <div className="flex items-center gap-2">
+            {[...Array(6)].map((_, i) => (
+              <button
+                key={i}
+                className={`px-4 py-1 rounded-full border font-semibold mx-1 flex items-center justify-center gap-1
+                  ${i + 1 === taskNumber
+                    ? 'bg-blue-800 text-white border-blue-500'
+                    : completedTasks.includes(i + 1)
+                      ? 'bg-green-700 text-white border-green-500'
+                      : 'bg-[#16243a] text-blue-200 border-[#22345a]'}
+                `}
+                disabled
+              >
+                {completedTasks.includes(i + 1) ? <span className="mr-1">✓</span> : null}
+                {i + 1}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center gap-4">
+            <span className="bg-[#1a2942] px-4 py-2 rounded-lg font-mono text-lg">{formatAssessmentTimeLeft()}</span>
+            <div className="flex items-center gap-2">
+              <img src={userImage} alt={userName} className="h-8 w-8 rounded-full object-cover" />
+              <div className="flex flex-col">
+                <span className="font-semibold text-sm">{userName}</span>
+                <span className="text-xs text-blue-200">harshavardhan@unstop.com</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Main Content */}
+        <div className="flex flex-1 h-0">
+          {connectionError && (
+            <div className="bg-red-700 text-white px-4 py-2 text-center font-bold">
+              {connectionError}
+              {detailedError && (
+                <div className="text-xs text-gray-200 mt-2 break-all">{detailedError}</div>
+              )}
+            </div>
+          )}
+          <div className="flex-1 flex flex-col h-full">
+            <div className="px-8 py-4 border-b border-[#1a2942] text-xl font-semibold flex-shrink-0">{taskTitle}</div>
+            <div className="flex flex-1 h-0 overflow-hidden">
+              {/* Special layout for Task 5 - no transcript panel, cleaner interface */}
+              {taskNumber === 5 ? (
+                <div className="flex flex-col items-center justify-center flex-1">
+                  <div className="flex gap-12 items-center justify-center w-full h-full">
+                    <div className="flex flex-col items-center">
+                      <div className={`rounded-2xl overflow-hidden bg-[#16243a] w-[520px] h-[360px] flex items-center justify-center border-4 ${currentSpeaker === 'interviewer' ? rippleClass : 'border-blue-700'}`}>
+                        <img src={aiImage} alt={aiName} className="object-cover w-full h-full" />
+                        {/* Audio animation bars */}
+                        {currentSpeaker === 'interviewer' && (
+                          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-1">
+                            {[1, 2, 3, 4].map((bar) => (
+                              <div key={bar} className="w-2 h-6 bg-blue-400 rounded animate-pulse" style={{ animationDelay: `${bar * 0.1}s` }} />
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <span className="mt-2 text-base text-blue-200">{aiName}</span>
+                    </div>
+                    <div className="flex flex-col items-center">
+                      <div className={`rounded-2xl overflow-hidden bg-[#16243a] w-[520px] h-[360px] flex items-center justify-center border-4 ${currentSpeaker === 'candidate' ? rippleClass : 'border-[#22345a]'}`}>
+                        <video ref={videoRef} autoPlay muted playsInline className="w-full h-full object-cover rounded-lg bg-gray-800" />
+                        {/* Audio animation bars */}
+                        {currentSpeaker === 'candidate' && (
+                          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-1">
+                            {[1, 2, 3, 4].map((bar) => (
+                              <div key={bar} className="w-2 h-6 bg-blue-400 rounded animate-pulse" style={{ animationDelay: `${bar * 0.1}s` }} />
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <span className="mt-2 text-base text-blue-200">{userName}</span>
+                    </div>
+                  </div>
+                  {/* Input box for Task 5 at the bottom center */}
+                  {isTaskStarted && !isTaskEnded && isAwaitingUserInput && (
+                    <div className="mt-8 w-full max-w-2xl px-8">
+                      <form onSubmit={handleTypedAnswerSubmit} className="flex items-center gap-4">
+                        <input
+                          type="text"
+                          className="px-6 py-4 rounded-xl border-2 border-blue-500 bg-[#16243a] text-white focus:outline-none focus:ring-2 focus:ring-blue-400 flex-1 text-lg"
+                          placeholder="Type what you heard..."
+                          value={typedAnswer}
+                          onChange={e => setTypedAnswer(e.target.value)}
+                          autoFocus
+                          disabled={isTaskEnded}
+                        />
+                        <Button type="submit" className="bg-blue-600 hover:bg-blue-700 px-8 py-4 rounded-xl font-semibold text-lg" disabled={!typedAnswer.trim() || isTaskEnded}>
+                          Submit
+                        </Button>
+                      </form>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                /* For tasks 4 and 6, show transcript panel to the right if showTranscript is true */
+                (taskNumber === 4 || taskNumber === 6) && showTranscript ? (
+                  <>
+                    <div className="flex flex-col items-center justify-center flex-1">
+                      <div className="flex gap-12 items-center justify-center w-full h-full">
+                        <div className="flex flex-col items-center">
+                          <div className={`rounded-2xl overflow-hidden bg-[#16243a] w-[520px] h-[360px] flex items-center justify-center border-4 ${currentSpeaker === 'interviewer' ? rippleClass : 'border-blue-700'}`}>
+                            <img src={aiImage} alt={aiName} className="object-cover w-full h-full" />
+                            {/* Audio animation bars */}
+                            {currentSpeaker === 'interviewer' && (
+                              <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-1">
+                                {[1, 2, 3, 4].map((bar) => (
+                                  <div key={bar} className="w-2 h-6 bg-blue-400 rounded animate-pulse" style={{ animationDelay: `${bar * 0.1}s` }} />
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                          <span className="mt-2 text-base text-blue-200">{aiName}</span>
+                        </div>
+                        <div className="flex flex-col items-center">
+                          <div className={`rounded-2xl overflow-hidden bg-[#16243a] w-[520px] h-[360px] flex items-center justify-center border-4 ${currentSpeaker === 'candidate' ? rippleClass : 'border-[#22345a]'}`}>
+                            <video ref={videoRef} autoPlay muted playsInline className="w-full h-full object-cover rounded-lg bg-gray-800" />
+                            {/* Audio animation bars */}
+                            {currentSpeaker === 'candidate' && (
+                              <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-1">
+                                {[1, 2, 3, 4].map((bar) => (
+                                  <div key={bar} className="w-2 h-6 bg-blue-400 rounded animate-pulse" style={{ animationDelay: `${bar * 0.1}s` }} />
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                          <span className="mt-2 text-base text-blue-200">{userName}</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex-1 flex flex-col h-full bg-[#101c33] border-l border-[#1a2942] min-w-[400px] max-w-[520px]">
+                      <div className="px-6 py-4 border-b border-[#1a2942] text-lg font-semibold flex-shrink-0">Current Question</div>
+                      <div ref={transcriptPanelRef} className="flex-1 min-h-0 overflow-y-auto p-6 space-y-4">
+                        {latestQAPair.ai && (
+                          <div className="mb-4">
+                            <div className="flex items-center gap-2 mb-2">
+                              <img src={aiImage} alt={aiName} className="w-8 h-8 rounded-full object-cover border-2 border-blue-500 bg-gray-800" />
+                              <span className="font-semibold text-blue-200">Question</span>
+                            </div>
+                            <div className="bg-blue-900 text-white rounded-2xl px-4 py-2 shadow-md whitespace-pre-line break-words text-base ml-10">
+                              {latestQAPair.ai.message}
+                            </div>
+                          </div>
+                        )}
+                        {latestQAPair.user && (
+                          <div>
+                            <div className="flex items-center gap-2 mb-2">
+                              {userImage ? (
+                                <img src={userImage} alt={userName} className="w-8 h-8 rounded-full object-cover border-2 border-blue-300 bg-gray-800" />
+                              ) : (
+                                <div className="w-8 h-8 rounded-full bg-blue-300 flex items-center justify-center text-blue-900 font-bold">U</div>
+                              )}
+                              <span className="font-semibold text-blue-200">Your Answer</span>
+                            </div>
+                            <div className="bg-[#22345a] text-blue-100 rounded-2xl px-4 py-2 shadow-md whitespace-pre-line break-words text-base ml-10">
+                              {latestQAPair.user.message}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                      {/* Timer display for Task 6 */}
+                      {taskNumber === 6 && isTimerRunning && (
+                        <div className="px-6 py-4 border-t border-[#1a2942]">
+                          <div className="flex items-center justify-center gap-4">
+                            <div className="text-2xl font-bold text-blue-400">
+                              Time Remaining: {timeRemaining}s
+                            </div>
+                            <div className="w-32 h-3 bg-[#16243a] rounded-full overflow-hidden">
+                              <div 
+                                className="h-full bg-blue-500 transition-all duration-1000 ease-linear"
+                                style={{ width: `${(timeRemaining / 30) * 100}%` }}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                      {/* Input box aligned with Current Question, always at the bottom */}
+                      {isTypedTask && isTaskStarted && !isTaskEnded && isAwaitingUserInput && !(taskNumber === 6 && isTimerRunning) && (
+                        <form onSubmit={handleTypedAnswerSubmit} className="flex items-center gap-2 px-6 pb-6">
+                          <input
+                            type="text"
+                            className="px-4 py-2 rounded-lg border border-blue-500 bg-[#16243a] text-white focus:outline-none focus:ring-2 focus:ring-blue-400 min-w-[200px] flex-1"
+                            placeholder="Type your answer..."
+                            value={typedAnswer}
+                            onChange={e => setTypedAnswer(e.target.value)}
+                            autoFocus
+                            disabled={isTaskEnded}
+                          />
+                          <Button type="submit" className="bg-blue-600 hover:bg-blue-700 px-6 py-2 rounded-lg font-semibold" disabled={!typedAnswer.trim() || isTaskEnded}>
+                            Submit
+                          </Button>
+                        </form>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex flex-1 items-center justify-center gap-12 p-8 h-full">
+                    <div className="flex flex-col items-center">
+                      <div className={`rounded-2xl overflow-hidden bg-[#16243a] w-[520px] h-[360px] flex items-center justify-center border-4 ${currentSpeaker === 'interviewer' ? rippleClass : 'border-blue-700'}`}>
+                        <img src={aiImage} alt={aiName} className="object-cover w-full h-full" />
+                        {/* Audio animation bars */}
+                        {currentSpeaker === 'interviewer' && (
+                          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-1">
+                            {[1, 2, 3, 4].map((bar) => (
+                              <div key={bar} className="w-2 h-6 bg-blue-400 rounded animate-pulse" style={{ animationDelay: `${bar * 0.1}s` }} />
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <span className="mt-2 text-base text-blue-200">{aiName}</span>
+                    </div>
+                    <div className="flex flex-col items-center">
+                      <div className={`rounded-2xl overflow-hidden bg-[#16243a] w-[520px] h-[360px] flex items-center justify-center border-4 ${currentSpeaker === 'candidate' ? rippleClass : 'border-[#22345a]'}`}>
+                        <video ref={videoRef} autoPlay muted playsInline className="w-full h-full object-cover rounded-lg bg-gray-800" />
+                        {/* Audio animation bars */}
+                        {currentSpeaker === 'candidate' && (
+                          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-1">
+                            {[1, 2, 3, 4].map((bar) => (
+                              <div key={bar} className="w-2 h-6 bg-blue-400 rounded animate-pulse" style={{ animationDelay: `${bar * 0.1}s` }} />
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <span className="mt-2 text-base text-blue-200">{userName}</span>
+                    </div>
+                  </div>
+                )
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-center gap-4 py-6 bg-[#101c33] border-t border-[#1a2942] flex-shrink-0">
+          {!isTaskStarted ? (
+            <Button className="bg-blue-600 hover:bg-blue-700 text-lg px-8 py-3 rounded-lg font-semibold" onClick={startInterview} disabled={isStarting}>
+              {isStarting ? 'Starting...' : 'Start Assessment'}
+            </Button>
+          ) : (
+            <Button className="bg-green-600 hover:bg-green-700 text-lg px-8 py-3 rounded-lg font-semibold" onClick={endTask} disabled={isTaskEnded}>Submit Task</Button>
+          )}
+          {/* Remove CC button for tasks 4, 5, and 6 */}
+          {!(taskNumber === 4 || taskNumber === 5 || taskNumber === 6) && taskNumber > 3 && (
+            <button
+              className={`ml-2 p-3 rounded-lg ${showTranscript ? 'bg-blue-800 text-white' : 'bg-[#16243a] text-blue-200'} hover:bg-blue-700 transition-all`}
+              onClick={handleTranscriptToggle}
+              aria-label="Toggle Transcript"
+            >
+              <FaClosedCaptioning size={28} />
+            </button>
+          )}
+          {/* Hide input at bottom for tasks 4, 5, and 6, as it's now inside Task Log */}
+          {!(taskNumber === 4 || taskNumber === 5 || taskNumber === 6) && isTypedTask && isTaskStarted && !isTaskEnded && isAwaitingUserInput && (
+            <form onSubmit={handleTypedAnswerSubmit} className="flex items-center gap-2 ml-6">
+              <input
+                type="text"
+                className="px-4 py-2 rounded-lg border border-blue-500 bg-[#16243a] text-white focus:outline-none focus:ring-2 focus:ring-blue-400 min-w-[300px]"
+                placeholder="Type your answer..."
+                value={typedAnswer}
+                onChange={e => setTypedAnswer(e.target.value)}
+                autoFocus
+                disabled={isTaskEnded}
+              />
+              <Button type="submit" className="bg-blue-600 hover:bg-blue-700 px-6 py-2 rounded-lg font-semibold" disabled={!typedAnswer.trim() || isTaskEnded}>
+                Submit
+              </Button>
+            </form>
+          )}
+        </div>
+      </div>
+    )
   );
 }; 

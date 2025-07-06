@@ -26,6 +26,7 @@ function isInterview(obj: any): obj is Interview {
 }
 
 export function InterviewReport() {
+  // All hooks at the top
   const { id } = useParams();
   const { pastInterviews } = useInterviewStore() as { pastInterviews: Interview[] };
   const interview: Interview | undefined = pastInterviews.find((i: Interview) => i.id === id);
@@ -36,15 +37,18 @@ export function InterviewReport() {
   const [activeTab, setActiveTab] = useState(0);
   const [isLoading, setIsLoading] = useState(!finalReport);
 
+  // Loader logic: after 6 tasks, before finalReport
+  const showPostTaskLoader = allTaskReports && allTaskReports.length === 6 && !finalReport;
+
   useEffect(() => {
-    if (finalReport) setIsLoading(false);
-    else setIsLoading(true);
+    setIsLoading(!finalReport);
   }, [finalReport]);
 
   // Try to parse the new JSON format from Gemini
   const geminiJson = finalReport ? parseGeminiJsonReport(finalReport) : null;
 
-  if (!interview) {
+  // --- Early return: Interview not found and no reports ---
+  if (!interview && !(finalReport || (allTaskReports && allTaskReports.length > 0))) {
     return (
       <div className="min-h-screen bg-gray-900 text-white p-8">
         <div className="max-w-4xl mx-auto">
@@ -54,7 +58,23 @@ export function InterviewReport() {
     );
   }
 
-  // Loader for final report
+  // --- Loader for final report after 6 tasks ---
+  if (showPostTaskLoader) {
+    return (
+      <div className="min-h-screen bg-gray-900 text-white flex flex-col items-center justify-center">
+        <div className="flex flex-col items-center gap-6">
+          <svg className="animate-spin h-16 w-16 text-blue-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
+          </svg>
+          <h2 className="text-2xl font-bold text-blue-200">Generating your detailed evaluation report...</h2>
+          <p className="text-blue-100 text-lg">This may take a few moments. Please wait while we analyze your interview performance.</p>
+        </div>
+      </div>
+    );
+  }
+
+  // --- Loader for final report (legacy, fallback) ---
   if (isLoading) {
     return (
       <div className="min-h-screen bg-gray-900 text-white flex flex-col items-center justify-center">
@@ -72,6 +92,8 @@ export function InterviewReport() {
 
   // Show multi-task reports if available, even if interview is not found
   if ((!interview) && (finalReport || (allTaskReports && allTaskReports.length > 0))) {
+    // Only show the first 5 tasks
+    const filteredTaskReports = allTaskReports.slice(0, 5);
     return (
       <div className="min-h-screen bg-gray-900 text-white p-8">
         <div className="max-w-4xl mx-auto">
@@ -89,34 +111,41 @@ export function InterviewReport() {
               </div>
             </>
           )}
-          {allTaskReports && allTaskReports.length > 0 && (
+          {filteredTaskReports && filteredTaskReports.length > 0 && (
             <div>
               <h2 className="text-2xl font-bold mb-4 mt-8">Task-wise Reports</h2>
               <div className="mb-6 flex gap-2">
-                {allTaskReports.map((r, idx) => {
-                  // Try to get a task name/title/skill for the tab
-                  let taskName = `Task ${r.taskNumber}`;
-                  // Try to extract from report
+                {filteredTaskReports.map((r, idx) => {
+                  // Show the task-specific role if valid, else fallback to default task name for the number
+                  let taskName = '';
                   let report = r.report;
+                  const defaultTaskNames = {
+                    1: 'Reading',
+                    2: 'Sentence Builds',
+                    3: 'Conversation',
+                    4: 'Sentence Completion',
+                    5: 'Dictation',
+                    6: 'Passage Reconstruction'
+                  } as const;
                   if (report) {
                     try {
                       const parsed = typeof report === 'string' ? JSON.parse(report) : report;
-                      if (parsed && (parsed.data?.role || parsed.role)) {
-                        const data = parsed.data || parsed;
-                        if (data.role && typeof data.role === 'string' && data.role.trim().toLowerCase() === 'sentence builds') {
-                          taskName = 'Sentence Builds';
-                        }
-                      }
-                      if (parsed && (parsed.data?.skills_evaluation || parsed.skills_evaluation)) {
-                        const data = parsed.data || parsed;
-                        const skills = Object.keys(data.skills_evaluation || {});
-                        if (skills.length > 0 && taskName === `Task ${r.taskNumber}`) taskName = skills[0];
-                      } else if (parsed && parsed.title) {
-                        taskName = parsed.title;
+                      const data = parsed.data || parsed;
+                      const validTaskRoles = Object.values(defaultTaskNames);
+                      if (
+                        data.role &&
+                        typeof data.role === 'string' &&
+                        validTaskRoles.includes(data.role.trim())
+                      ) {
+                        taskName = data.role.trim();
+                      } else {
+                        taskName = defaultTaskNames[r.taskNumber as keyof typeof defaultTaskNames] || `Task ${r.taskNumber}`;
                       }
                     } catch {
-                      // fallback to markdown or plain string
+                      taskName = defaultTaskNames[r.taskNumber as keyof typeof defaultTaskNames] || `Task ${r.taskNumber}`;
                     }
+                  } else {
+                    taskName = defaultTaskNames[r.taskNumber as keyof typeof defaultTaskNames] || `Task ${r.taskNumber}`;
                   }
                   return (
                     <button
@@ -130,10 +159,10 @@ export function InterviewReport() {
                 })}
               </div>
               <div className="bg-gray-800 rounded-lg p-6 min-h-[300px]">
-                {typeof allTaskReports[activeTab].report === 'string' ? (
-                  <div dangerouslySetInnerHTML={{ __html: String(markdown(allTaskReports[activeTab].report)) }} />
+                {typeof filteredTaskReports[activeTab].report === 'string' ? (
+                  <div dangerouslySetInnerHTML={{ __html: String(markdown(filteredTaskReports[activeTab].report)) }} />
                 ) : (
-                  <pre className="text-sm text-blue-100">{JSON.stringify(allTaskReports[activeTab].report, null, 2)}</pre>
+                  <pre className="text-sm text-blue-100">{JSON.stringify(filteredTaskReports[activeTab].report, null, 2)}</pre>
                 )}
               </div>
             </div>
@@ -152,11 +181,11 @@ export function InterviewReport() {
 
   // Initialize an object to store skill ratings
   const skillRatings: { [key: string]: number } = {};
-
-  // Run a loop to traverse interview.skills and interview.candidateRating and store in the skillRatings object
-  interview.skills.forEach((skill, index) => {
-    skillRatings[skill] = interview.candidateRating[index];
-  });
+  if (interview && interview.skills && interview.candidateRating) {
+    interview.skills.forEach((skill, index) => {
+      skillRatings[skill] = interview.candidateRating[index];
+    });
+  }
 
   // $('h3').each((index: any, element: any) => {
   //   console.log(interview);
@@ -173,7 +202,7 @@ export function InterviewReport() {
 
 
   useEffect(() => {
-    console.log(interview);
+    if (!interview || !interview.skills || !interview.candidateRating || !interview.idealRating) return;
     const canvas = document.getElementById('myChart') as HTMLCanvasElement;
     if (!canvas) {
       return;
@@ -256,7 +285,7 @@ export function InterviewReport() {
         chartRef.current.destroy();
       }
     };  
-  }, [skillRatings]);
+  }, [interview]);
 
   // If there are multi-task reports, show the tabbed UI
   if (allTaskReports && allTaskReports.length > 0) {
@@ -390,29 +419,36 @@ export function InterviewReport() {
             </div>
             <div className="mb-6 flex gap-2">
               {allTaskReports.map((r, idx) => {
-                // Try to get a task name/title/skill for the tab
-                let taskName = `Task ${r.taskNumber}`;
-                // Try to extract from report
+                // Show the task-specific role if valid, else fallback to default task name for the number
+                let taskName = '';
                 let report = r.report;
+                const defaultTaskNames = {
+                  1: 'Reading',
+                  2: 'Sentence Builds',
+                  3: 'Conversation',
+                  4: 'Sentence Completion',
+                  5: 'Dictation',
+                  6: 'Passage Reconstruction'
+                } as const;
                 if (report) {
                   try {
                     const parsed = typeof report === 'string' ? JSON.parse(report) : report;
-                    if (parsed && (parsed.data?.role || parsed.role)) {
-                      const data = parsed.data || parsed;
-                      if (data.role && typeof data.role === 'string' && data.role.trim().toLowerCase() === 'sentence builds') {
-                        taskName = 'Sentence Builds';
-                      }
-                    }
-                    if (parsed && (parsed.data?.skills_evaluation || parsed.skills_evaluation)) {
-                      const data = parsed.data || parsed;
-                      const skills = Object.keys(data.skills_evaluation || {});
-                      if (skills.length > 0 && taskName === `Task ${r.taskNumber}`) taskName = skills[0];
-                    } else if (parsed && parsed.title) {
-                      taskName = parsed.title;
+                    const data = parsed.data || parsed;
+                    const validTaskRoles = Object.values(defaultTaskNames);
+                    if (
+                      data.role &&
+                      typeof data.role === 'string' &&
+                      validTaskRoles.includes(data.role.trim())
+                    ) {
+                      taskName = data.role.trim();
+                    } else {
+                      taskName = defaultTaskNames[r.taskNumber as keyof typeof defaultTaskNames] || `Task ${r.taskNumber}`;
                     }
                   } catch {
-                    // fallback to markdown or plain string
+                    taskName = defaultTaskNames[r.taskNumber as keyof typeof defaultTaskNames] || `Task ${r.taskNumber}`;
                   }
+                } else {
+                  taskName = defaultTaskNames[r.taskNumber as keyof typeof defaultTaskNames] || `Task ${r.taskNumber}`;
                 }
                 return (
                   <button
@@ -485,14 +521,14 @@ export function InterviewReport() {
                 </div>
                 <div className="text-gray-400 mb-2 text-sm">See how you performed in each skill area.</div>
                 <div className="flex flex-col gap-2">
-                  {skills.map((skill: string, idx: number) => (
+                  {skills && skills.length > 0 ? skills.map((skill: string, idx: number) => (
                     <div key={skill} className="flex items-center gap-4">
                       <span className="w-48">{idx + 1}. {skill}</span>
                       <div className="flex-1 h-2 bg-gray-700 rounded-full overflow-hidden">
                         <div className="h-2 bg-yellow-400" style={{ width: `${(candidateScores[idx] / idealScores[idx]) * 100}%` }}></div>
                       </div>
                     </div>
-                  ))}
+                  )) : <div className="text-gray-400">No skills available for this task.</div>}
                 </div>
               </div>
               {/* Skill Summary Radar Chart */}
@@ -841,7 +877,11 @@ export function InterviewReport() {
                 pointLabels: { color: '#f6f8fa', font: { size: 14 } }
               },
             },
-            elements: { line: { borderWidth: 3 } },
+            elements: {
+              line: {
+                borderWidth: 3
+              },
+            },
           },
         });
       }
@@ -918,14 +958,14 @@ export function InterviewReport() {
               </div>
               <div className="text-gray-400 mb-2 text-sm">See how you performed in each skill area.</div>
               <div className="flex flex-col gap-2">
-                {skills.map((skill: string, idx: number) => (
+                {skills && skills.length > 0 ? skills.map((skill: string, idx: number) => (
                   <div key={skill} className="flex items-center gap-4">
                     <span className="w-48">{idx + 1}. {skill}</span>
                     <div className="flex-1 h-2 bg-gray-700 rounded-full overflow-hidden">
                       <div className="h-2 bg-yellow-400" style={{ width: `${(candidateScores[idx] / idealScores[idx]) * 100}%` }}></div>
                     </div>
                   </div>
-                ))}
+                )) : <div className="text-gray-400">No skills available for this task.</div>}
               </div>
             </div>
             {/* Skill Summary Radar Chart */}

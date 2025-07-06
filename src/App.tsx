@@ -53,7 +53,7 @@ export default function App() {
         <Route path="/interview-room/task/3" element={<TaskRoom taskNumber={3} totalTasks={6} taskTitle="Conversations" aiImage={placeholderAIImage} aiName="Unstop Bot" userImage={placeholderUserImage} userName="Harshavardhan Bajoria" />} />
         <Route path="/interview-room/task/4" element={<TaskRoom taskNumber={4} totalTasks={6} taskTitle="Sentence Completion" aiImage={placeholderAIImage} aiName="Unstop Bot" userImage={placeholderUserImage} userName="Harshavardhan Bajoria" />} />
         <Route path="/interview-room/task/5" element={<TaskRoom taskNumber={5} totalTasks={6} taskTitle="Dictation" aiImage={placeholderAIImage} aiName="Unstop Bot" userImage={placeholderUserImage} userName="Harshavardhan Bajoria" />} />
-        <Route path="/interview-room/task/6" element={<TaskRoom taskNumber={6} totalTasks={6} taskTitle="Final Task" aiImage={placeholderAIImage} aiName="Unstop Bot" userImage={placeholderUserImage} userName="Harshavardhan Bajoria" />} />
+        <Route path="/interview-room/task/6" element={<TaskRoom taskNumber={6} totalTasks={6} taskTitle="Passage Reconstruction" aiImage={placeholderAIImage} aiName="Unstop Bot" userImage={placeholderUserImage} userName="Harshavardhan Bajoria" />} />
       </Routes>
     </Router>
   );

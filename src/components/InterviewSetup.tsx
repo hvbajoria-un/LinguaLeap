@@ -128,9 +128,19 @@ export function InterviewSetup() {
       const idealratings = [0.5,0.8,0.6,0.7,0.9]
       setIdealRating(idealratings);
       setTimeout(() => {
-        if (skills.length > 0 && idealRating.length > 0) {
-          setInterviewMeta({ selectedRole, skills, otherRole, idealRating });
-          navigate('/interview-room/task/1', { state: { selectedRole, skills, otherRole, idealRating } });
+        // If no skills are selected (coming from test overview), use default English skills
+        const finalSkills = skills.length > 0 ? skills : [
+          'Pronunciation', 'Fluency', 'Attention', 'Focus',
+          'Working Memory', 'Syntactic Awareness', 'Grammar', 'Logical Sequencing', 'Listening Comprehension',
+          'Vocabulary', 'Contextual Understanding', 'Word Appropriateness', 'Grammatical Fit', 'Spelling Accuracy',
+          'Reading Comprehension', 'Paraphrasing', 'Content Accuracy', 'Written Expression', 'Time Management'
+        ];
+        const finalRole = selectedRole || 'English Assessment';
+        const finalOtherRole = otherRole || '';
+        
+        if (idealRating.length > 0) {
+          setInterviewMeta({ selectedRole: finalRole, skills: finalSkills, otherRole: finalOtherRole, idealRating });
+          navigate('/interview-room/task/1', { state: { selectedRole: finalRole, skills: finalSkills, otherRole: finalOtherRole, idealRating } });
         }
       }, 100);
     }
@@ -255,8 +265,8 @@ export function InterviewSetup() {
         <div className="overflow-x-auto mb-10">
           <table className="min-w-full text-base text-slate-100 rounded-xl overflow-hidden">
             <thead>
-              <tr className="bg-slate-700">
-                <th className="px-4 py-3 font-semibold border-r border-slate-600">Part</th>
+              <tr className="border-b border-slate-700">
+                <th className="px-4 py-3 font-semibold border-r border-slate-600 w-32">Part</th>
                 <th className="px-4 py-3 font-semibold border-r border-slate-600">Task</th>
                 <th className="px-4 py-3 font-semibold border-r border-slate-600">Description</th>
                 <th className="px-4 py-3 font-semibold">Skills</th>
@@ -264,40 +274,46 @@ export function InterviewSetup() {
             </thead>
             <tbody>
               <tr className="border-b border-slate-700">
-                <td className="px-4 py-3 border-r border-slate-700">Part A</td>
+                <td className="px-4 py-3 border-r border-slate-700 w-32">Part A</td>
                 <td className="px-4 py-3 border-r border-slate-700">Repeat</td>
                 <td className="px-4 py-3 border-r border-slate-700">Listen and repeat sentences</td>
                 <td className="px-4 py-3">Speaking & Listening</td>
               </tr>
               <tr className="border-b border-slate-700">
-                <td className="px-4 py-3 border-r border-slate-700">Part B</td>
+                <td className="px-4 py-3 border-r border-slate-700 w-32">Part B</td>
                 <td className="px-4 py-3 border-r border-slate-700">Sentence Builds</td>
                 <td className="px-4 py-3 border-r border-slate-700">Rearrange word groups into sentences</td>
                 <td className="px-4 py-3">Speaking & Listening</td>
               </tr>
               <tr className="border-b border-slate-700">
-                <td className="px-4 py-3 border-r border-slate-700">Part C</td>
+                <td className="px-4 py-3 border-r border-slate-700 w-32">Part C</td>
                 <td className="px-4 py-3 border-r border-slate-700">Conversations</td>
                 <td className="px-4 py-3 border-r border-slate-700">Answer questions about conversations</td>
                 <td className="px-4 py-3">Listening & Speaking</td>
               </tr>
               <tr className="border-b border-slate-700">
-                <td className="px-4 py-3 border-r border-slate-700">Part D</td>
+                <td className="px-4 py-3 border-r border-slate-700 w-32">Part D</td>
                 <td className="px-4 py-3 border-r border-slate-700">Sentence Completion</td>
                 <td className="px-4 py-3 border-r border-slate-700">Complete sentences with appropriate words</td>
                 <td className="px-4 py-3">Reading & Writing</td>
               </tr>
-              <tr>
-                <td className="px-4 py-3 border-r border-slate-700">Part E</td>
+              <tr className="border-b border-slate-700">
+                <td className="px-4 py-3 border-r border-slate-700 w-32">Part E</td>
                 <td className="px-4 py-3 border-r border-slate-700">Dictation</td>
                 <td className="px-4 py-3 border-r border-slate-700">Type sentences exactly as heard</td>
+                <td className="px-4 py-3">Listening & Writing</td>
+              </tr>
+              <tr className="border-b border-slate-700">
+                <td className="px-4 py-3 border-r border-slate-700 w-32">Part F</td>
+                <td className="px-4 py-3 border-r border-slate-700">Passage Reconstruction</td>
+                <td className="px-4 py-3 border-r border-slate-700">Read, remember, and reconstruct a passage in your own words</td>
                 <td className="px-4 py-3">Listening & Writing</td>
               </tr>
             </tbody>
           </table>
         </div>
-        <Button className="w-full bg-sky-600 hover:bg-sky-500 focus:ring-2 focus:ring-sky-400 text-lg py-3 rounded-xl transition-all duration-150" onClick={() => setStep(5)}>
-          Next
+        <Button className="w-full bg-sky-600 hover:bg-sky-500 focus:ring-2 focus:ring-sky-400 text-lg py-3 rounded-xl transition-all duration-150" onClick={handleStartInterview}>
+          Start English Assessment
         </Button>
       </div>
     </div>
@@ -422,7 +438,7 @@ export function InterviewSetup() {
               disabled={(selectedRole !== 'Others' && skills.length === 0 ) || (selectedRole === 'Others' && otherRole === '')}  
               className="w-1/2 bg-blue-600 hover:bg-blue-700"
             >
-              Start Interview
+              Start Assessment
             </Button>
           </div>
         </div>

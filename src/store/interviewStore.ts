@@ -45,11 +45,19 @@ interface InterviewMetaState {
   setInterviewMeta: (meta: Partial<Omit<InterviewMetaState, 'setInterviewMeta'>>) => void;
 }
 
+interface AssessmentTimerState {
+  assessmentTimeLeft: number;
+  assessmentTimerActive: boolean;
+  setAssessmentTimeLeft: (seconds: number) => void;
+  setAssessmentTimerActive: (active: boolean) => void;
+  resetAssessmentTimer: () => void;
+}
+
 // fs.writeFileSync(filePath, JSON.stringify(sampleInterviews, null, 2), 'utf-8');
 
 export const useInterviewStore = create<InterviewState>((set) => ({
   currentInterview: null,
-  pastInterviews: sampleInterviews, // Initialize with sample data
+  pastInterviews: [], // Initialize with empty array (no default reports)
   setCurrentInterview: (interview) => set({ currentInterview: interview }),
   addPastInterview: (interview) => {
       //sampleInterviews.push(interview);
@@ -88,4 +96,12 @@ export const useInterviewMetaStore = create<InterviewMetaState>((set) => ({
   otherRole: '',
   idealRating: [],
   setInterviewMeta: (meta) => set((state) => ({ ...state, ...meta })),
+}));
+
+export const useAssessmentTimerStore = create<AssessmentTimerState>((set) => ({
+  assessmentTimeLeft: 15 * 60,
+  assessmentTimerActive: false,
+  setAssessmentTimeLeft: (seconds) => set({ assessmentTimeLeft: seconds }),
+  setAssessmentTimerActive: (active) => set({ assessmentTimerActive: active }),
+  resetAssessmentTimer: () => set({ assessmentTimeLeft: 15 * 60, assessmentTimerActive: false }),
 }));

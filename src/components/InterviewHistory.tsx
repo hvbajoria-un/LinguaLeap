@@ -28,7 +28,7 @@ export function InterviewHistory() {
                       </div>
                     </div>
                     <div className="ml-4">
-                      <h4 className="text-lg font-medium">{interview.role} Interview</h4>
+                      <h4 className="text-lg font-medium">English 4-Skills Essentials Test</h4>
                       <p className="text-sm text-gray-400">
                         {new Date(interview.date).toLocaleDateString('en-US', {
                           month: 'long',
@@ -36,16 +36,6 @@ export function InterviewHistory() {
                           year: 'numeric',
                         })}
                       </p>
-                      <div className="mt-1 flex flex-wrap gap-2">
-                        {interview.skills.map((skill) => (
-                          <span
-                            key={skill}
-                            className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-900 text-blue-200"
-                          >
-                            {skill}
-                          </span>
-                        ))}
-                      </div>
                     </div>
                   </div>
                   <div className="flex space-x-2">
