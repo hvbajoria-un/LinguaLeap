@@ -86,4 +86,10 @@ export class Player {
     this.queue = [];
     this.isPlaying = false;
   }
+
+  async resume() {
+    if (this.audioContext && this.audioContext.state === 'suspended') {
+      await this.audioContext.resume();
+    }
+  }
 }

@@ -1,14 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { FaClosedCaptioning } from 'react-icons/fa';
 import { Button } from './ui/Button';
-import { useTaskMedia } from './hooks/useTaskMedia';
 import { useTaskTranscript, TranscriptMessage } from './hooks/useTaskTranscript';
 import { useMultiTaskInterviewStore } from '../store/interviewStore';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Player } from '../player';
+import { Player } from '../lib/player';
 import { Recorder } from '../recorder';
 import { LowLevelRTClient, SessionUpdateMessage, Voice } from 'rt-client';
-import { Camera, CameraOff, PhoneOff } from 'lucide-react';
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { useInterviewStore } from '../store/interviewStore';
 import { useInterviewMetaStore } from '../store/interviewStore';
@@ -25,14 +23,12 @@ interface TaskRoomProps {
   transcript?: TranscriptMessage[];
 }
 
-let currentOutputFormat = 'g711-ulaw';
-let startTimeStamp: Date;
 let recordingActive: boolean = false;
 let buffer: Uint8Array = new Uint8Array();
+let startTimeStamp: Date;
 
 export const TaskRoom: React.FC<TaskRoomProps> = ({
   taskNumber,
-  totalTasks,
   taskTitle,
   aiImage,
   aiName,
@@ -95,9 +91,19 @@ export const TaskRoom: React.FC<TaskRoomProps> = ({
   const assessmentTimerRef = useRef<NodeJS.Timeout | null>(null);
   const assessmentTimeLeftRef = useRef(assessmentTimeLeft);
   useEffect(() => { assessmentTimeLeftRef.current = assessmentTimeLeft; }, [assessmentTimeLeft]);
+  const [showTaskSwitchLoader, setShowTaskSwitchLoader] = useState(false);
 
   // Reset all state and re-request camera when taskNumber or location changes (new task)
   useEffect(() => {
+    // CLEANUP: Close previous realtime session if any
+    if (realtimeStreaming.current) {
+      try { realtimeStreaming.current.close(); } catch {}
+      realtimeStreaming.current = null;
+    }
+    // Stop AI audio playback when moving to the next task
+    if (audioPlayer.current) {
+      audioPlayer.current.clear();
+    }
     setIsTaskStarted(false);
     setIsTaskEnded(false);
     setTranscript([]);
@@ -134,8 +140,10 @@ export const TaskRoom: React.FC<TaskRoomProps> = ({
     return () => {
       stopMediaStream();
       if (audioRecorder.current) audioRecorder.current.stop();
-      if (audioPlayer.current) audioPlayer.current.clear();
-      if (realtimeStreaming.current) try { realtimeStreaming.current.close(); } catch {}
+      if (realtimeStreaming.current) {
+        try { realtimeStreaming.current.close(); } catch {}
+        realtimeStreaming.current = null;
+      }
       stopTimer();
     };
     // eslint-disable-next-line
@@ -199,10 +207,7 @@ export const TaskRoom: React.FC<TaskRoomProps> = ({
     if (!realtimeStreaming.current) return;
     recordingActive = false;
     if (audioRecorder.current) audioRecorder.current.stop();
-    if (audioPlayer.current) audioPlayer.current.clear();
     audioRecorder.current = new Recorder(processAudioRecordingBuffer);
-    audioPlayer.current = new Player();
-    await audioPlayer.current.init(24000);
     if (startRecording) {
       // Request only audio when starting interview
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -288,9 +293,9 @@ export const TaskRoom: React.FC<TaskRoomProps> = ({
             addMessage('interviewer', transcript);
             lastTaskReportRef.current = transcript;
             // Auto-submit if AI says 'submit task'
-            if (/submit task/i.test(transcript) && !isTaskEnded) {
-              endTask();
-            }
+            // if (/submit task/i.test(transcript) && !isTaskEnded) {
+            //   endTask();
+            // }
             // Check for "30 seconds" in Task 6 and start timer
             if (taskNumber === 6 && transcript.toLowerCase().includes('30 seconds')) {
               startTimer(30);
@@ -527,6 +532,12 @@ export const TaskRoom: React.FC<TaskRoomProps> = ({
 
   // Mark task as complete after endTask
   async function endTask() {
+    if (audioRecorder.current) audioRecorder.current.stop();
+    // Always close and nullify the realtime API before moving to the next task
+    if (realtimeStreaming.current) {
+      try { realtimeStreaming.current.close(); } catch {}
+      realtimeStreaming.current = null;
+    }
     setIsTaskEnded(true);
     addTaskTranscript(taskNumber, transcript);
     // Store the last received report for this task (if any)
@@ -536,14 +547,11 @@ export const TaskRoom: React.FC<TaskRoomProps> = ({
     // Fire off Gemini report generation in the background (non-blocking)
     generateTaskReportNonBlocking(taskNumber, transcript);
     stopMediaStream();
-    if (audioRecorder.current) audioRecorder.current.stop();
-    if (audioPlayer.current) audioPlayer.current.clear();
-    if (realtimeStreaming.current) {
-      try { realtimeStreaming.current.close(); } catch {}
-      realtimeStreaming.current = null;
-    }
     setCompletedTasks((prev) => [...prev, taskNumber]);
     if (taskNumber < 6) {
+      setShowTaskSwitchLoader(true);
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+      setShowTaskSwitchLoader(false);
       navigate(`/interview-room/task/${taskNumber + 1}`);
     } else {
       // Show loader and wait for Gemini API to finish before navigating
@@ -551,6 +559,10 @@ export const TaskRoom: React.FC<TaskRoomProps> = ({
       await generateFinalReport();
       setIsGeneratingFinalReport(false);
       setFinalReportReady(true);
+      if (audioPlayer.current) {
+        audioPlayer.current.clear();
+        audioPlayer.current = null;
+      }
       navigate('/interview-history');
     }
   }
@@ -580,6 +592,7 @@ export const TaskRoom: React.FC<TaskRoomProps> = ({
       const endpoint = "https://hvcodequarry.openai.azure.com/openai/realtime?api-version=2024-10-01-preview&deployment=gpt-4o-mini-realtime-preview";
       const key = "COLmcASBDO6PfjeTrq4TvCYR8iltbERSI5d8KeIAeQAHKr4BxuK7JQQJ99BCACHYHv6XJ3w3AAABACOGBci3";
       const deploymentOrModel = "gpt-4o-mini-realtime-preview";
+      // Always create a new realtime session for the new task
       realtimeStreaming.current = new LowLevelRTClient(new URL(endpoint), { key }, { deployment: deploymentOrModel });
       // Use robust config and prompt
       let defaultPrompt = '';
@@ -767,7 +780,7 @@ Constraint Checklist & Confidence Score:
     - Provide the instructions: 
       > "Please type one word that fits the meaning of the sentence. You will have 25 seconds for each sentence. You will see a timer. Please click 'Submit' when you are finished with each sentence."
     - Present an example by verbalizing it: 
-      > "For example, you might see the sentence: 'It's _____ tonight. Bring your sweater.' You would then type the word 'cold' to complete the sentence."
+      > "For example, you might see the sentence: 'It's <blank> tonight. Bring your sweater.' You would then type the word 'cold' to complete the sentence."
     - Ask the user: "Are you ready to begin?"
     - Handle questions concisely:
       - Relevant questions about the task: Provide brief, precise clarification (e.g., "Please click the 'Submit' button after typing your word.").
@@ -776,7 +789,7 @@ Constraint Checklist & Confidence Score:
 3. Task Screen Interaction:
     - For each question:
       1. State: "Complete the sentence."
-      2. Present an incomplete sentence with a single blank space.
+      2. Present an incomplete sentence with a single blank space denoted by <blank>.
       3. Pause briefly for the user to process the sentence.
       4. Instruct: "Please type your word in the text box, then click 'Submit' to submit and move on."
       5. Automatically transition to the next sentence after the user submits their word. Do not provide feedback or repeat sentences.
@@ -947,6 +960,10 @@ Constraint Checklist & Confidence Score:
           setDetailedError(err?.message || String(err));
           console.error('[TaskRoom] Audio start error:', err);
         });
+      }
+      // Resume AudioContext on user gesture if possible
+      if (audioPlayer.current && typeof audioPlayer.current.resume === 'function') {
+        try { await audioPlayer.current.resume(); } catch (e) { console.warn('AudioContext resume failed', e); }
       }
       handleRealtimeMessages();
       // Send initial user message and response.create
@@ -1126,8 +1143,52 @@ Constraint Checklist & Confidence Score:
     }
   }, [isTaskStarted]);
 
+  // --- NEW: Start audio player on mount, keep open until after task 6 is submitted ---
+  useEffect(() => {
+    let isMounted = true;
+    (async () => {
+      if (!audioPlayer.current) {
+        audioPlayer.current = new Player();
+        await audioPlayer.current.init(24000);
+      }
+    })();
+    return () => {
+      // Only stop/clear audio player if we are on or after task 6 and the final report is ready (i.e., after submission)
+      if (taskNumber === 6 && finalReportReady && audioPlayer.current) {
+        audioPlayer.current.clear();
+        audioPlayer.current = null;
+      }
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [taskNumber, finalReportReady]);
+
+  // Resume audio worklet as soon as the loader is completed loading (after final report generation)
+  useEffect(() => {
+    if (!isGeneratingFinalReport && taskNumber === 6 && audioPlayer.current) {
+      audioPlayer.current.resume();
+    }
+  }, [isGeneratingFinalReport, taskNumber]);
+
+  // Loader UI for task switching
+  const taskSwitchLoaderUI = (
+    <div className="min-h-screen bg-[#0a1627] text-white flex flex-col items-center justify-center">
+      <div className="flex flex-col items-center gap-6">
+        <svg className="animate-spin h-16 w-16 text-blue-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
+        </svg>
+        <h2 className="text-2xl font-bold text-blue-200 animate-pulse">Loading Next Task...</h2>
+        <p className="text-blue-100 text-lg">Get ready! Your next challenge is about to begin.</p>
+      </div>
+    </div>
+  );
+
   return (
-    isGeneratingFinalReport && taskNumber === 6 ? loaderUI : (
+    showTaskSwitchLoader ? (
+      taskSwitchLoaderUI
+    ) : isGeneratingFinalReport && taskNumber === 6 ? (
+      loaderUI
+    ) : (
       <div className="h-screen bg-[#0a1627] text-white flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between px-8 py-4 bg-[#101c33] border-b border-[#1a2942] flex-shrink-0">
