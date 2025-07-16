@@ -8,6 +8,8 @@ import { Interview } from '../types/interview';
 import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
 import type { TranscriptMessage } from './hooks/useTaskTranscript';
+import { InterviewPDFExport } from './InterviewPDFExport';
+import ReactDOM from 'react-dom';
 
 Chart.register(RadarController, RadialLinearScale, PointElement, LineElement, Filler, Tooltip, Legend);
 
@@ -26,7 +28,7 @@ function isInterview(obj: any): obj is Interview {
 }
 
 export function InterviewReport() {
-  // All hooks at the top
+  // All hooks and state at the top
   const { id } = useParams();
   const { pastInterviews } = useInterviewStore() as { pastInterviews: Interview[] };
   const interview: Interview | undefined = pastInterviews.find((i: Interview) => i.id === id);
@@ -36,60 +38,342 @@ export function InterviewReport() {
   const finalReport = getFinalReport();
   const [activeTab, setActiveTab] = useState(0);
   const [isLoading, setIsLoading] = useState(!finalReport);
+  const pdfExportRef = useRef<HTMLDivElement>(null);
 
-  // Loader logic: after 6 tasks, before finalReport
-  const showPostTaskLoader = allTaskReports && allTaskReports.length === 6 && !finalReport;
+  // Derived variables
+  const normalized = normalizeFullReport({ interview, finalReport });
 
-  useEffect(() => {
-    setIsLoading(!finalReport);
-  }, [finalReport]);
-
-  // Try to parse the new JSON format from Gemini
-  const geminiJson = finalReport ? parseGeminiJsonReport(finalReport) : null;
-
-  // --- Early return: Interview not found and no reports ---
-  if (!interview && !(finalReport || (allTaskReports && allTaskReports.length > 0))) {
-    return (
-      <div className="min-h-screen bg-gray-900 text-white p-8">
-        <div className="max-w-4xl mx-auto">
-          <h2 className="text-2xl font-bold">Interview Report Not Found</h2>
-        </div>
-      </div>
-    );
+  // Helper to get base64 image of a chart
+  function getChartBase64(canvasId: string): string {
+    const canvas = document.getElementById(canvasId) as HTMLCanvasElement;
+    if (canvas) {
+      return canvas.toDataURL('image/png');
+    }
+    return '';
   }
 
-  // --- Loader for final report after 6 tasks ---
-  if (showPostTaskLoader) {
-    return (
-      <div className="min-h-screen bg-gray-900 text-white flex flex-col items-center justify-center">
-        <div className="flex flex-col items-center gap-6">
-          <svg className="animate-spin h-16 w-16 text-blue-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
-          </svg>
-          <h2 className="text-2xl font-bold text-blue-200">Generating your detailed evaluation report...</h2>
-          <p className="text-blue-100 text-lg">This may take a few moments. Please wait while we analyze your interview performance.</p>
-        </div>
-      </div>
-    );
+  // --- PDF Download Handler ---
+  async function handleDownloadPDF() {
+    // 1. Prepare all data for InterviewPDFExport
+    const logoUrl = '/logo.svg'; // Update with your logo path
+    // Use available fields or fallback
+    const candidateName = (interview && ('name' in interview) && (interview as any).name) || (interview && ('candidateName' in interview) && (interview as any).candidateName) || 'Candidate';
+    const candidateEmail = (interview && ('email' in interview) && (interview as any).email) || (interview && ('candidateEmail' in interview) && (interview as any).candidateEmail) || 'candidate@email.com';
+    const role = normalized?.role || interview?.role || 'Role';
+    const summary = normalized?.overallFeedback || '';
+    const score = (() => {
+      if (!normalized) return 0;
+      const total = normalized.candidateScores.reduce((a: number, b: number) => a + b, 0);
+      return normalized.candidateScores.length > 0 ? total / normalized.candidateScores.length : 0;
+    })();
+    const scoreLabel = (() => {
+      if (score < 2) return 'Extremely Poor';
+      if (score < 4) return 'Poor';
+      if (score < 6) return 'Average';
+      if (score < 8) return 'Good';
+      if (score < 9) return 'Very Good';
+      return 'Excellent';
+    })();
+    const skills = (normalized?.skills || []).map((name: string, i: number) => ({
+      name,
+      candidate: normalized?.candidateScores[i] || 0,
+      ideal: normalized?.idealScores[i] || 10,
+    }));
+    // Wait for chart to render
+    await new Promise(res => setTimeout(res, 300));
+    const radarChartUrl = getChartBase64('myChart');
+    const strengths = normalized?.strengths || [];
+    const weaknesses = normalized?.weaknesses || [];
+    // Prepare tasks
+    const tasks = (allTaskReports || [])
+      .map((r, idx) => {
+        const task = normalizeSingleTaskReport(r.report);
+        if (!task) return undefined;
+        const radarId = `myChart-task-${idx}`;
+        // Try to get radar chart for each task if rendered
+        const radarChartUrl = getChartBase64(radarId);
+        return {
+          name: task.role || `Task ${r.taskNumber}`,
+          score: (() => {
+            const total = task.candidateScores.reduce((a: number, b: number) => a + b, 0);
+            return task.candidateScores.length > 0 ? total / task.candidateScores.length : 0;
+          })(),
+          summary: task.overallFeedback || '',
+          strengths: task.strengths || [],
+          weaknesses: task.weaknesses || [],
+          radarChartUrl,
+          skills: (task.skills || []).map((name: string, i: number) => ({
+            name,
+            candidate: task.candidateScores[i] || 0,
+            ideal: task.idealScores[i] || 10,
+            explanation: task.explanations[i] || '',
+          })),
+          feedback: task.overallFeedback || '',
+          transcript: task.transcript || [],
+        };
+      })
+      .filter((t): t is NonNullable<typeof t> => t !== undefined);
+    // Use all transcripts for full transcript page
+    const transcript = interview?.transcript || normalized?.transcript || [];
+    // 2. Render InterviewPDFExport off-screen
+    const container = document.createElement('div');
+    container.style.position = 'fixed';
+    container.style.left = '-9999px';
+    container.style.top = '0';
+    container.style.width = '800px';
+    document.body.appendChild(container);
+    import('react-dom').then(ReactDOM => {
+      ReactDOM.render(
+        <InterviewPDFExport
+          logoUrl={logoUrl}
+          candidateName={candidateName}
+          candidateEmail={candidateEmail}
+          role={role}
+          summary={summary}
+          score={score}
+          scoreLabel={scoreLabel}
+          skills={skills}
+          radarChartUrl={radarChartUrl}
+          strengths={strengths}
+          weaknesses={weaknesses}
+          tasks={tasks}
+          transcript={transcript}
+        />,
+        container,
+        async () => {
+          // Wait for DOM to render
+          await new Promise(res => setTimeout(res, 500));
+          // 3. Use html2canvas to capture each page
+          const pages = Array.from(container.children[0].children);
+          const pdf = new jsPDF({ unit: 'px', format: 'a4' });
+          const padding = 0;
+          let addPage = false;
+          for (let i = 0; i < pages.length; i++) {
+            // eslint-disable-next-line no-await-in-loop
+            const canvas = await html2canvas(pages[i] as HTMLElement, { scale: 2, useCORS: true });
+            const imgData = canvas.toDataURL('image/png');
+            const pageWidth = pdf.internal.pageSize.getWidth() - 2 * padding;
+            const pageHeight = pdf.internal.pageSize.getHeight() - 2 * padding;
+            let imgWidth = canvas.width;
+            let imgHeight = canvas.height;
+            const ratio = Math.min(pageWidth / imgWidth, pageHeight / imgHeight, 1);
+            imgWidth *= ratio;
+            imgHeight *= ratio;
+            if (addPage) pdf.addPage();
+            pdf.addImage(imgData, 'PNG', padding, padding, imgWidth, imgHeight);
+            addPage = true;
+          }
+          pdf.save('Interview_Report.pdf');
+          // Clean up
+          ReactDOM.unmountComponentAtNode(container);
+          container.remove();
+        }
+      );
+    });
   }
 
-  // --- Loader for final report (legacy, fallback) ---
-  if (isLoading) {
-    return (
-      <div className="min-h-screen bg-gray-900 text-white flex flex-col items-center justify-center">
-        <div className="flex flex-col items-center gap-6">
-          <svg className="animate-spin h-16 w-16 text-blue-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
-          </svg>
-          <h2 className="text-2xl font-bold text-blue-200">Generating your detailed evaluation report...</h2>
-          <p className="text-blue-100 text-lg">This may take a few moments. Please wait while we analyze your interview performance.</p>
-        </div>
-      </div>
-    );
+  // All other helper functions (normalizeFullReport, normalizeSingleTaskReport, formatDuration, etc.)
+  // --- UNIFIED REPORT RENDERING FOR ALL FORMATS ---
+  // Helper to normalize any report (Gemini JSON, legacy markdown, or object)
+  function normalizeFullReport({ interview, finalReport }: { interview: any, finalReport: any }) {
+    let data = null;
+    try {
+      const parsed = typeof finalReport === 'string' ? JSON.parse(finalReport) : finalReport;
+      if (parsed && (parsed.data?.skills_evaluation || parsed.skills_evaluation)) {
+        data = parsed.data || parsed;
+      }
+    } catch {}
+    if (data) {
+      // Gemini JSON format
+      const skills = Object.keys(data.skills_evaluation || {});
+      const candidateScores = skills.map(skill => {
+        const rating = data.skills_evaluation[skill].rating;
+        if (typeof rating === 'string' && rating.includes('/')) {
+          return parseInt(rating.split('/')[0], 10);
+        }
+        return data.skills_evaluation[skill].obtained || 0;
+      });
+      const idealScores = skills.map(skill => {
+        const rating = data.skills_evaluation[skill].rating;
+        if (typeof rating === 'string' && rating.includes('/')) {
+          return parseInt(rating.split('/')[1], 10);
+        }
+        return data.skills_evaluation[skill].total || 10;
+      });
+      // Custom questions: support both object and Q/A pair
+      let customQuestions: Record<string, string> = {};
+      if (data.customQuestions) {
+        if (typeof data.customQuestions === 'object' && !Array.isArray(data.customQuestions)) {
+          // If it's a single Q/A pair
+          if ('Question' in data.customQuestions && 'Answer' in data.customQuestions) {
+            customQuestions[data.customQuestions.Question] = data.customQuestions.Answer;
+          } else {
+            customQuestions = data.customQuestions;
+          }
+        }
+      }
+      return {
+        role: data.role || '',
+        company: data.company || '',
+        job_description: data.job_description || '',
+        skills,
+        candidateScores,
+        idealScores,
+        explanations: skills.map(skill => data.skills_evaluation[skill].explanation),
+        skillRatings: skills.map(skill => data.skills_evaluation[skill].rating),
+        strengths: data.candidate_feedback?.strengths || [],
+        weaknesses: data.candidate_feedback?.weaknesses || [],
+        overallFeedback: data.candidate_feedback?.overall_feedback || '',
+        transcript: data.transcript || [],
+        customQuestions,
+      };
+    }
+    // Legacy/markdown/object format
+    // Try to extract from interview object (used in sampleInterviews)
+    if (interview && interview.skills && interview.candidateRating && interview.idealRating) {
+      return {
+        skills: interview.skills,
+        candidateScores: interview.candidateRating,
+        idealScores: interview.idealRating,
+        explanations: [],
+        strengths: [],
+        weaknesses: [],
+        overallFeedback: interview.feedback || '',
+        transcript: interview.transcript || [],
+        customQuestions: {},
+      };
+    }
+    // Try to parse markdown for skills/ratings/comments
+    if (typeof finalReport === 'string') {
+      const skillRegex = /\*\*([\w\s]+)\*\*:?\s*-?\s*\*\*?Rating:?\*\*?\s*:?\s*([\d]+)\/?([\d]+)?/gi;
+      const skills: string[] = [];
+      const candidateScores: number[] = [];
+      const idealScores: number[] = [];
+      let match;
+      while ((match = skillRegex.exec(finalReport)) !== null) {
+        skills.push(match[1].trim());
+        candidateScores.push(Number(match[2]));
+        idealScores.push(match[3] ? Number(match[3]) : 10);
+      }
+      // Try to extract overall feedback
+      let overallFeedback = '';
+      const feedbackMatch = finalReport.match(/Overall Feedback[\s\S]*?([\w\W]+?)(?:\n\n|$)/i);
+      if (feedbackMatch) overallFeedback = feedbackMatch[1].trim();
+      return {
+        skills,
+        candidateScores,
+        idealScores,
+        explanations: [],
+        strengths: [],
+        weaknesses: [],
+        overallFeedback,
+        transcript: [],
+        customQuestions: {},
+      };
+    }
+    // Fallback
+    return null;
   }
 
+  // --- UNIFIED REPORT RENDERING FOR SINGLE TASK (for task-wise tab) ---
+  function normalizeSingleTaskReport(report: any) {
+    // Try to parse as Gemini JSON
+    let data = null;
+    try {
+      const parsed = typeof report === 'string' ? JSON.parse(report) : report;
+      if (parsed && (parsed.data?.skills_evaluation || parsed.skills_evaluation)) {
+        data = parsed.data || parsed;
+      }
+    } catch {}
+    if (data) {
+      // Gemini JSON format (single skill)
+      const skills = Object.keys(data.skills_evaluation || {});
+      const candidateScores = skills.map(skill => {
+        const rating = data.skills_evaluation[skill].rating;
+        if (typeof rating === 'string' && rating.includes('/')) {
+          return parseInt(rating.split('/')[0], 10);
+        }
+        return data.skills_evaluation[skill].obtained || 0;
+      });
+      const idealScores = skills.map(skill => {
+        const rating = data.skills_evaluation[skill].rating;
+        if (typeof rating === 'string' && rating.includes('/')) {
+          return parseInt(rating.split('/')[1], 10);
+        }
+        return data.skills_evaluation[skill].total || 10;
+      });
+      let customQuestions: Record<string, string> = {};
+      if (data.customQuestions) {
+        if (typeof data.customQuestions === 'object' && !Array.isArray(data.customQuestions)) {
+          if ('Question' in data.customQuestions && 'Answer' in data.customQuestions) {
+            customQuestions[data.customQuestions.Question] = data.customQuestions.Answer;
+          } else {
+            customQuestions = data.customQuestions;
+          }
+        }
+      }
+      return {
+        role: data.role || '',
+        company: data.company || '',
+        job_description: data.job_description || '',
+        skills,
+        candidateScores,
+        idealScores,
+        explanations: skills.map(skill => data.skills_evaluation[skill].explanation),
+        skillRatings: skills.map(skill => data.skills_evaluation[skill].rating),
+        strengths: data.candidate_feedback?.strengths || [],
+        weaknesses: data.candidate_feedback?.weaknesses || [],
+        overallFeedback: data.candidate_feedback?.overall_feedback || '',
+        transcript: data.transcript || [],
+        customQuestions,
+      };
+    }
+    // Legacy/markdown/object format
+    if (report && report.skills && report.candidateRating && report.idealRating) {
+      return {
+        skills: report.skills,
+        candidateScores: report.candidateRating,
+        idealScores: report.idealRating,
+        explanations: [],
+        strengths: [],
+        weaknesses: [],
+        overallFeedback: report.feedback || '',
+        transcript: report.transcript || [],
+        customQuestions: {},
+      };
+    }
+    // Try to parse markdown for skills/ratings/comments
+    if (typeof report === 'string') {
+      const skillRegex = /\*\*([\w\s]+)\*\*:?-?\s*\*\*?Rating:?\*\*?\s*:?\s*([\d]+)\/?([\d]+)?/gi;
+      const skills: string[] = [];
+      const candidateScores: number[] = [];
+      const idealScores: number[] = [];
+      let match;
+      while ((match = skillRegex.exec(report)) !== null) {
+        skills.push(match[1].trim());
+        candidateScores.push(Number(match[2]));
+        idealScores.push(match[3] ? Number(match[3]) : 10);
+      }
+      let overallFeedback = '';
+      const feedbackMatch = report.match(/Overall Feedback[\s\S]*?([\w\W]+?)(?:\n\n|$)/i);
+      if (feedbackMatch) overallFeedback = feedbackMatch[1].trim();
+      return {
+        skills,
+        candidateScores,
+        idealScores,
+        explanations: [],
+        strengths: [],
+        weaknesses: [],
+        overallFeedback,
+        transcript: [],
+        customQuestions: {},
+      };
+    }
+    // Fallback
+    return null;
+  }
+
+  // --- MAIN RENDER ---
   // Show multi-task reports if available, even if interview is not found
   if ((!interview) && (finalReport || (allTaskReports && allTaskReports.length > 0))) {
     // Only show the first 5 tasks
@@ -182,7 +466,7 @@ export function InterviewReport() {
   // Initialize an object to store skill ratings
   const skillRatings: { [key: string]: number } = {};
   if (interview && interview.skills && interview.candidateRating) {
-    interview.skills.forEach((skill, index) => {
+    interview.skills.forEach((skill: string, index: number) => {
       skillRatings[skill] = interview.candidateRating[index];
     });
   }
@@ -293,7 +577,7 @@ export function InterviewReport() {
     const selectedTaskReport = allTaskReports[activeTab]?.report;
     const selectedTaskNumber = allTaskReports[activeTab]?.taskNumber;
     const allTranscripts = useMultiTaskInterviewStore().getAllTranscripts();
-    const normalized = (() => {
+    const tabNormalized = (() => {
       const norm = normalizeSingleTaskReport(selectedTaskReport);
       if (!norm) return null;
       // If transcript is missing or empty, fetch from store
@@ -305,8 +589,8 @@ export function InterviewReport() {
       }
       return norm;
     })();
-    if (normalized) {
-      const { role, company, job_description, skills, candidateScores, idealScores, explanations, skillRatings, strengths, weaknesses, overallFeedback, transcript, customQuestions } = normalized;
+    if (tabNormalized) {
+      const { role, company, job_description, skills, candidateScores, idealScores, explanations, skillRatings, strengths, weaknesses, overallFeedback, transcript, customQuestions } = tabNormalized;
       const totalObtained = candidateScores.reduce((a: number, b: number) => a + b, 0);
       const avgScore = candidateScores.length > 0 ? totalObtained / candidateScores.length : 0;
       let avgLabel = '';
@@ -601,207 +885,7 @@ export function InterviewReport() {
   }
 
   // --- UNIFIED REPORT RENDERING FOR ALL FORMATS ---
-  // Helper to normalize any report (Gemini JSON, legacy markdown, or object)
-  function normalizeFullReport({ interview, finalReport }: { interview: any, finalReport: any }) {
-    let data = null;
-    try {
-      const parsed = typeof finalReport === 'string' ? JSON.parse(finalReport) : finalReport;
-      if (parsed && (parsed.data?.skills_evaluation || parsed.skills_evaluation)) {
-        data = parsed.data || parsed;
-      }
-    } catch {}
-    if (data) {
-      // Gemini JSON format
-      const skills = Object.keys(data.skills_evaluation || {});
-      const candidateScores = skills.map(skill => {
-        const rating = data.skills_evaluation[skill].rating;
-        if (typeof rating === 'string' && rating.includes('/')) {
-          return parseInt(rating.split('/')[0], 10);
-        }
-        return data.skills_evaluation[skill].obtained || 0;
-      });
-      const idealScores = skills.map(skill => {
-        const rating = data.skills_evaluation[skill].rating;
-        if (typeof rating === 'string' && rating.includes('/')) {
-          return parseInt(rating.split('/')[1], 10);
-        }
-        return data.skills_evaluation[skill].total || 10;
-      });
-      // Custom questions: support both object and Q/A pair
-      let customQuestions: Record<string, string> = {};
-      if (data.customQuestions) {
-        if (typeof data.customQuestions === 'object' && !Array.isArray(data.customQuestions)) {
-          // If it's a single Q/A pair
-          if ('Question' in data.customQuestions && 'Answer' in data.customQuestions) {
-            customQuestions[data.customQuestions.Question] = data.customQuestions.Answer;
-          } else {
-            customQuestions = data.customQuestions;
-          }
-        }
-      }
-      return {
-        role: data.role || '',
-        company: data.company || '',
-        job_description: data.job_description || '',
-        skills,
-        candidateScores,
-        idealScores,
-        explanations: skills.map(skill => data.skills_evaluation[skill].explanation),
-        skillRatings: skills.map(skill => data.skills_evaluation[skill].rating),
-        strengths: data.candidate_feedback?.strengths || [],
-        weaknesses: data.candidate_feedback?.weaknesses || [],
-        overallFeedback: data.candidate_feedback?.overall_feedback || '',
-        transcript: data.transcript || [],
-        customQuestions,
-      };
-    }
-    // Legacy/markdown/object format
-    // Try to extract from interview object (used in sampleInterviews)
-    if (interview && interview.skills && interview.candidateRating && interview.idealRating) {
-      return {
-        skills: interview.skills,
-        candidateScores: interview.candidateRating,
-        idealScores: interview.idealRating,
-        explanations: [],
-        strengths: [],
-        weaknesses: [],
-        overallFeedback: interview.feedback || '',
-        transcript: interview.transcript || [],
-        customQuestions: {},
-      };
-    }
-    // Try to parse markdown for skills/ratings/comments
-    if (typeof finalReport === 'string') {
-      const skillRegex = /\*\*([\w\s]+)\*\*:?\s*-?\s*\*\*?Rating:?\*\*?\s*:?\s*([\d]+)\/?([\d]+)?/gi;
-      const skills: string[] = [];
-      const candidateScores: number[] = [];
-      const idealScores: number[] = [];
-      let match;
-      while ((match = skillRegex.exec(finalReport)) !== null) {
-        skills.push(match[1].trim());
-        candidateScores.push(Number(match[2]));
-        idealScores.push(match[3] ? Number(match[3]) : 10);
-      }
-      // Try to extract overall feedback
-      let overallFeedback = '';
-      const feedbackMatch = finalReport.match(/Overall Feedback[\s\S]*?([\w\W]+?)(?:\n\n|$)/i);
-      if (feedbackMatch) overallFeedback = feedbackMatch[1].trim();
-      return {
-        skills,
-        candidateScores,
-        idealScores,
-        explanations: [],
-        strengths: [],
-        weaknesses: [],
-        overallFeedback,
-        transcript: [],
-        customQuestions: {},
-      };
-    }
-    // Fallback
-    return null;
-  }
-
-  // --- UNIFIED REPORT RENDERING FOR SINGLE TASK (for task-wise tab) ---
-  function normalizeSingleTaskReport(report: any) {
-    // Try to parse as Gemini JSON
-    let data = null;
-    try {
-      const parsed = typeof report === 'string' ? JSON.parse(report) : report;
-      if (parsed && (parsed.data?.skills_evaluation || parsed.skills_evaluation)) {
-        data = parsed.data || parsed;
-      }
-    } catch {}
-    if (data) {
-      // Gemini JSON format (single skill)
-      const skills = Object.keys(data.skills_evaluation || {});
-      const candidateScores = skills.map(skill => {
-        const rating = data.skills_evaluation[skill].rating;
-        if (typeof rating === 'string' && rating.includes('/')) {
-          return parseInt(rating.split('/')[0], 10);
-        }
-        return data.skills_evaluation[skill].obtained || 0;
-      });
-      const idealScores = skills.map(skill => {
-        const rating = data.skills_evaluation[skill].rating;
-        if (typeof rating === 'string' && rating.includes('/')) {
-          return parseInt(rating.split('/')[1], 10);
-        }
-        return data.skills_evaluation[skill].total || 10;
-      });
-      let customQuestions: Record<string, string> = {};
-      if (data.customQuestions) {
-        if (typeof data.customQuestions === 'object' && !Array.isArray(data.customQuestions)) {
-          if ('Question' in data.customQuestions && 'Answer' in data.customQuestions) {
-            customQuestions[data.customQuestions.Question] = data.customQuestions.Answer;
-          } else {
-            customQuestions = data.customQuestions;
-          }
-        }
-      }
-      return {
-        role: data.role || '',
-        company: data.company || '',
-        job_description: data.job_description || '',
-        skills,
-        candidateScores,
-        idealScores,
-        explanations: skills.map(skill => data.skills_evaluation[skill].explanation),
-        skillRatings: skills.map(skill => data.skills_evaluation[skill].rating),
-        strengths: data.candidate_feedback?.strengths || [],
-        weaknesses: data.candidate_feedback?.weaknesses || [],
-        overallFeedback: data.candidate_feedback?.overall_feedback || '',
-        transcript: data.transcript || [],
-        customQuestions,
-      };
-    }
-    // Legacy/markdown/object format
-    if (report && report.skills && report.candidateRating && report.idealRating) {
-      return {
-        skills: report.skills,
-        candidateScores: report.candidateRating,
-        idealScores: report.idealRating,
-        explanations: [],
-        strengths: [],
-        weaknesses: [],
-        overallFeedback: report.feedback || '',
-        transcript: report.transcript || [],
-        customQuestions: {},
-      };
-    }
-    // Try to parse markdown for skills/ratings/comments
-    if (typeof report === 'string') {
-      const skillRegex = /\*\*([\w\s]+)\*\*:?-?\s*\*\*?Rating:?\*\*?\s*:?\s*([\d]+)\/?([\d]+)?/gi;
-      const skills: string[] = [];
-      const candidateScores: number[] = [];
-      const idealScores: number[] = [];
-      let match;
-      while ((match = skillRegex.exec(report)) !== null) {
-        skills.push(match[1].trim());
-        candidateScores.push(Number(match[2]));
-        idealScores.push(match[3] ? Number(match[3]) : 10);
-      }
-      let overallFeedback = '';
-      const feedbackMatch = report.match(/Overall Feedback[\s\S]*?([\w\W]+?)(?:\n\n|$)/i);
-      if (feedbackMatch) overallFeedback = feedbackMatch[1].trim();
-      return {
-        skills,
-        candidateScores,
-        idealScores,
-        explanations: [],
-        strengths: [],
-        weaknesses: [],
-        overallFeedback,
-        transcript: [],
-        customQuestions: {},
-      };
-    }
-    // Fallback
-    return null;
-  }
-
-  // --- MAIN RENDER ---
-  const normalized = normalizeFullReport({ interview, finalReport });
+  // If not valid JSON, show a user-friendly error ---
   if (normalized) {
     const { role, company, job_description, skills, candidateScores, idealScores, explanations, skillRatings, strengths, weaknesses, overallFeedback, transcript, customQuestions } = normalized;
     const totalObtained = candidateScores.reduce((a: number, b: number) => a + b, 0);
@@ -1060,49 +1144,6 @@ export function InterviewReport() {
       </div>
     </div>
   );
-}
-
-function handleDownloadPDF() {
-  // Find all tab contents (main report and each task tab)
-  const reportContainers = document.querySelectorAll('.report-tab-content');
-  if (!reportContainers.length) {
-    alert('No report content found to export.');
-    return;
-  }
-  const pdf = new jsPDF({ unit: 'px', format: 'a4' });
-  const padding = 16;
-  let addPage = false;
-  const processTab = (container: Element, idx: number, total: number) =>
-    html2canvas(container as HTMLElement, { scale: 2, useCORS: true }).then((canvas) => {
-      const imgData = canvas.toDataURL('image/png');
-      const pageWidth = pdf.internal.pageSize.getWidth() - 2 * padding;
-      const pageHeight = pdf.internal.pageSize.getHeight() - 2 * padding;
-      // Calculate image size to fit A4
-      let imgWidth = canvas.width;
-      let imgHeight = canvas.height;
-      const ratio = Math.min(pageWidth / imgWidth, pageHeight / imgHeight, 1);
-      imgWidth *= ratio;
-      imgHeight *= ratio;
-      if (addPage) pdf.addPage();
-      pdf.addImage(imgData, 'PNG', padding, padding, imgWidth, imgHeight);
-      addPage = true;
-      if (idx === total - 1) {
-        pdf.save('Interview_Report.pdf');
-      }
-    });
-  // Show all tabs, hide others, and capture each
-  const originalActive = document.querySelector('.report-tab-btn.active');
-  const tabButtons = document.querySelectorAll('.report-tab-btn');
-  const originalDisplay = [];
-  tabButtons.forEach((btn, idx) => {
-    // Simulate click to show tab
-    (btn as HTMLElement).click();
-    // Wait for DOM update
-    originalDisplay.push(setTimeout(() => {
-      const container = document.querySelector('.report-tab-content');
-      if (container) processTab(container, idx, tabButtons.length);
-    }, 500 * (idx + 1)));
-  });
 }
 
 function formatDuration(ms: number) {
