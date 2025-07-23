@@ -251,6 +251,26 @@ export const TaskRoom: React.FC<TaskRoomProps> = ({
     for await (const message of realtimeStreaming.current.messages()) {
       switch (message.type) {
         case 'session.created':
+          // Send initial user message and response.create only after session is created
+          if (realtimeStreaming.current) {
+            try {
+              await realtimeStreaming.current.send({
+                type: 'conversation.item.create',
+                item: {
+                  type: 'message',
+                  role: 'user',
+                  content: [
+                    { type: 'input_text', text: 'Hello!' }
+                  ]
+                }
+              });
+              await realtimeStreaming.current.send({ type: 'response.create' });
+            } catch (err) {
+              setConnectionError('Failed to send initial message.');
+              setDetailedError(err instanceof Error ? err.message : String(err));
+              console.error('[TaskRoom] Initial message error:', err);
+            }
+          }
           break;
         case 'response.audio_transcript.delta':
           // For deltas, do not add a new message bubble
@@ -379,84 +399,88 @@ export const TaskRoom: React.FC<TaskRoomProps> = ({
   // Shared system instruction for Gemini report generation (strict JSON format)
   const systemInstruction = `Evaluate the interview performance of a candidate for the ${selectedRole === 'Others' ? otherRole : selectedRole} role at the company, using the provided skills requirements, interview transcript, and custom questions specified. Assess the candidate's skills strictly and provide minimal scores where responses are vague or insufficient.\n\n### Evaluation Process:\n1. Review the Provided Inputs: Analyze the required skills, and problem statements to identify the evaluation criteria.\n2. Assess the Candidate's Skills: Evaluate each skill mentioned in ${skills.join(', ')} based on their interview responses. Assign a numeric rating (0-10) and a justification for the score, being particularly strict if answers lack depth or specificity.\n3. Extract Custom Questions: Extract short, clear answers to any custom questions from the interaction, ensuring they are concise and relevant.\n4. Provide Strengths and Weaknesses: Derive strengths and weaknesses from the candidate's performance in relation to the requirements of the role.\n5. Overall Feedback: Make a recommendation on whether the candidate is suitable for the role, backed by detailed reasoning.\n\n### Scoring Metrics:\n- 0-3: Poor performance or major gaps in knowledge.\n- 4-6: Average performance with room for improvement.\n- 7-9: Good performance with strong understanding.\n- 10: Exceptional performance, exceeding expectations.\n\n### Output Format\nThe final evaluation report should be output in the following structured JSON format:\n\n{\n  "role": "[Role Name]",\n  "company": "[Company Name]",\n  "job_description": "[Brief job description or key responsibilities]",\n  "skills_evaluation": {\n    "[Skill_name]": {\n      "rating": "[Numeric rating, e.g., 3/10]",\n      "explanation": "[Detailed reasoning for the score, referring to specific answers or interactions]"\n    }\n  },\n  "candidate_feedback": {\n    "strengths": [\n      "[Identified strength from the interaction or responses]"\n    ],\n    "weaknesses": [\n      "[Identified weakness or gap in knowledge/skills]"\n    ],\n    "overall_feedback": "[Summarized feedback on candidate's performance, suitability for the role, and any key areas for growth.]"\n  },\n  "customQuestions": {\n    "Question": "[The given question]",\n    "Answer": "[Extracted answer to Question]"\n  }\n}\n\n### Notes:\n- Provide strong, evidence-based reasoning for all skill scores. Avoid vague or generic responses.\n- Ensure the answers to custom questions are clearly extracted and formatted.\n- Be very strict in your evaluation and reflective of insufficient answers in scoring or feedback.\n- In the skill_evaluation make sure that the inner nested JSON has the skill name as key.`;
 
-  // Helper to generate a per-task report using Gemini 2.0 Flash (non-blocking, with polling)
-  const generateTaskReportNonBlocking = (taskNum: number, transcriptData: any) => {
-    let isCancelled = false;
-    // Use the full transcript as-is for Gemini
-    let taskSkills: string[];
-    let taskRole: string;
-    if (taskNum === 1) {
-      taskSkills = ['Pronunciation', 'Fluency', 'Attention', 'Focus'];
-      taskRole = 'Reading';
-    } else if (taskNum === 2) {
-      taskSkills = ['Working Memory', 'Syntactic Awareness', 'Grammar', 'Logical Sequencing', 'Listening Comprehension'];
-      taskRole = 'Sentence Builds';
-    } else if (taskNum === 3) {
-      taskSkills = ['Listening Comprehension', 'Information Retention', 'Logical Reasoning', 'Focus and Task Adherence', 'Recall'];
-      taskRole = 'Conversation';
-    } else if (taskNum === 4) {
-      taskSkills = ['Vocabulary', 'Contextual Understanding', 'Word Appropriateness', 'Grammatical Fit', 'Spelling Accuracy'];
-      taskRole = 'Sentence Completion';
-    } else if (taskNum === 5) {
-      taskSkills = ['Listening Accuracy', 'Spelling Proficiency', 'Punctuation Awareness', 'Typing Accuracy', 'Grammar and Sentence Structure Recognition'];
-      taskRole = 'Dictation';
-    } else if (taskNum === 6) {
-      taskSkills = ['Reading Comprehension', 'Paraphrasing', 'Content Accuracy', 'Written Expression', 'Time Management'];
-      taskRole = 'Passage Reconstruction';
-    } else {
-      taskSkills = skills;
-      taskRole = selectedRole === 'Others' ? otherRole : selectedRole;
-    }
-    const taskJson = {
-      role: taskRole,
-      company: 'the company',
-      job_description: '',
-      skills: taskSkills,
-      transcript: transcriptData, // Use the full transcript array
-      taskNumber: taskNum,
-    };
-    const taskPrompt = `Below is the JSON data for a single interview task. Parse the JSON and use it to evaluate the candidate's performance for Task ${taskNum}. Return the report in the specified JSON format only.\n\nJSON:\n\n${JSON.stringify(taskJson, null, 2)}\n\nFollow the system instruction for the output format.`;
-    const apiKey = 'AIzaSyDHGWLeiroFLiCqfahIWCrDkWEjpjbFcMI';
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({
-      model: "gemini-2.0-flash",
-      systemInstruction,
-    });
-    const generationConfig = {
-      temperature: 0.55,
-      responseMimeType: "application/json",
-    };
-    (async () => {
-      try {
-        const chatSession = model.startChat({
-          generationConfig,
-          history: [],
-        });
-        const resultPromise = chatSession.sendMessage(taskPrompt);
-        // Poll for the result every 2 seconds
-        const poll = async () => {
-          if (isCancelled) return;
-          if (resultPromise && typeof resultPromise.then === 'function') {
-            const isDone = await Promise.race([
-              resultPromise.then(() => true),
-              new Promise((resolve) => setTimeout(() => resolve(false), 2000)),
-            ]);
-            if (isDone) {
-              const result = await resultPromise;
-              const report = result.response.text();
-              addTaskReport(taskNum, report);
-              return;
-            } else {
-              setTimeout(poll, 2000);
-            }
-          }
-        };
-        poll();
-      } catch (err) {
-        // Optionally handle/report error
+  // Helper to generate a per-task report using Gemini 2.0 Flash (now returns a Promise that resolves when done)
+  const generateTaskReportNonBlocking = (taskNum: number, transcriptData: any): Promise<void> => {
+    return new Promise((resolve) => {
+      let isCancelled = false;
+      // Use the full transcript as-is for Gemini
+      let taskSkills: string[];
+      let taskRole: string;
+      if (taskNum === 1) {
+        taskSkills = ['Pronunciation', 'Fluency', 'Attention', 'Focus'];
+        taskRole = 'Reading';
+      } else if (taskNum === 2) {
+        taskSkills = ['Working Memory', 'Syntactic Awareness', 'Grammar', 'Logical Sequencing', 'Listening Comprehension'];
+        taskRole = 'Sentence Builds';
+      } else if (taskNum === 3) {
+        taskSkills = ['Listening Comprehension', 'Information Retention', 'Logical Reasoning', 'Focus and Task Adherence', 'Recall'];
+        taskRole = 'Conversation';
+      } else if (taskNum === 4) {
+        taskSkills = ['Vocabulary', 'Contextual Understanding', 'Word Appropriateness', 'Grammatical Fit', 'Spelling Accuracy'];
+        taskRole = 'Sentence Completion';
+      } else if (taskNum === 5) {
+        taskSkills = ['Listening Accuracy', 'Spelling Proficiency', 'Punctuation Awareness', 'Typing Accuracy', 'Grammar and Sentence Structure Recognition'];
+        taskRole = 'Dictation';
+      } else if (taskNum === 6) {
+        taskSkills = ['Reading Comprehension', 'Paraphrasing', 'Content Accuracy', 'Written Expression', 'Time Management'];
+        taskRole = 'Passage Reconstruction';
+      } else {
+        taskSkills = skills;
+        taskRole = selectedRole === 'Others' ? otherRole : selectedRole;
       }
-    })();
-    return () => { isCancelled = true; };
+      const taskJson = {
+        role: taskRole,
+        company: 'the company',
+        job_description: '',
+        skills: taskSkills,
+        transcript: transcriptData, // Use the full transcript array
+        taskNumber: taskNum,
+      };
+      const taskPrompt = `Below is the JSON data for a single interview task. Parse the JSON and use it to evaluate the candidate's performance for Task ${taskNum}. Return the report in the specified JSON format only.\n\nJSON:\n\n${JSON.stringify(taskJson, null, 2)}\n\nFollow the system instruction for the output format.`;
+      const apiKey = 'AIzaSyDHGWLeiroFLiCqfahIWCrDkWEjpjbFcMI';
+      const genAI = new GoogleGenerativeAI(apiKey);
+      const model = genAI.getGenerativeModel({
+        model: "gemini-2.0-flash",
+        systemInstruction,
+      });
+      const generationConfig = {
+        temperature: 0.55,
+        responseMimeType: "application/json",
+      };
+      (async () => {
+        try {
+          const chatSession = model.startChat({
+            generationConfig,
+            history: [],
+          });
+          const resultPromise = chatSession.sendMessage(taskPrompt);
+          // Poll for the result every 2 seconds
+          const poll = async () => {
+            if (isCancelled) return;
+            if (resultPromise && typeof resultPromise.then === 'function') {
+              const isDone = await Promise.race([
+                resultPromise.then(() => true),
+                new Promise((resolve) => setTimeout(() => resolve(false), 2000)),
+              ]);
+              if (isDone) {
+                const result = await resultPromise;
+                const report = result.response.text();
+                addTaskReport(taskNum, report);
+                resolve(); // <-- resolve the promise here
+                return;
+              } else {
+                setTimeout(poll, 2000);
+              }
+            }
+          };
+          poll();
+        } catch (err) {
+          // Optionally handle/report error
+          resolve(); // resolve even on error
+        }
+      })();
+      return () => { isCancelled = true; };
+    });
   };
 
   // Helper to generate the final report in the background (now using Gemini 2.0 Flash)
@@ -552,13 +576,15 @@ export const TaskRoom: React.FC<TaskRoomProps> = ({
     if (lastTaskReportRef.current) {
       addTaskReport(taskNumber, lastTaskReportRef.current);
     }
-    // Fire off Gemini report generation in the background (non-blocking)
-    generateTaskReportNonBlocking(taskNumber, transcript);
+    // Fire off Gemini report generation in the background (now returns a promise)
+    const reportPromise = generateTaskReportNonBlocking(taskNumber, transcript);
     stopMediaStream();
     setCompletedTasks((prev) => [...prev, taskNumber]);
     if (taskNumber < 6) {
       setShowTaskSwitchLoader(true);
-      await new Promise((resolve) => setTimeout(resolve, 3000));
+      // Wait for Gemini report, then 2 seconds, then switch
+      await reportPromise;
+      await new Promise((resolve) => setTimeout(resolve, 2000));
       setShowTaskSwitchLoader(false);
       navigate(`/interview-room/task/${taskNumber + 1}`);
     } else {
@@ -974,26 +1000,6 @@ Constraint Checklist & Confidence Score:
         try { await audioPlayer.current.resume(); } catch (e) { console.warn('AudioContext resume failed', e); }
       }
       handleRealtimeMessages();
-      // Send initial user message and response.create
-      realtimeStreaming.current.send({
-        type: 'conversation.item.create',
-        item: {
-          type: 'message',
-          role: 'user',
-          content: [
-            { type: 'input_text', text: 'Hello!' }
-          ]
-        }
-      }).catch((err) => {
-        setConnectionError('Failed to send initial message.');
-        setDetailedError(err?.message || String(err));
-        console.error('[TaskRoom] Initial message error:', err);
-      });
-      realtimeStreaming.current.send({ type: 'response.create' }).catch((err) => {
-        setConnectionError('Failed to send response.create.');
-        setDetailedError(err?.message || String(err));
-        console.error('[TaskRoom] response.create error:', err);
-      });
     } catch (err: any) {
       setConnectionError('Failed to start AI interview session.');
       setDetailedError(err?.message || String(err));
@@ -1151,13 +1157,34 @@ Constraint Checklist & Confidence Score:
     }
   }, [isTaskStarted]);
 
-  // --- NEW: Start audio player on mount, keep open until after task 6 is submitted ---
+  // --- NEW: Start audio player and recorder on mount, keep open until after task 6 is submitted ---
   useEffect(() => {
-    let isMounted = true;
     (async () => {
       if (!audioPlayer.current) {
         audioPlayer.current = new Player();
         await audioPlayer.current.init(24000);
+        // Attempt to resume audio context as soon as player is initialized
+        if (audioPlayer.current && typeof audioPlayer.current.resume === 'function') {
+          try {
+            await audioPlayer.current.resume();
+          } catch (e) {
+            console.warn('AudioContext resume failed on task load, will retry on user interaction.', e);
+          }
+        }
+      }
+      // Start the audio recorder worklet as soon as we land on a new task
+      if (isTypedTask) {
+        await resetAudio(false).catch((err) => {
+          setConnectionError('Failed to initialize audio player.');
+          setDetailedError(err?.message || String(err));
+          console.error('[TaskRoom] Audio player init error:', err);
+        });
+      } else {
+        await resetAudio(true).catch((err) => {
+          setConnectionError('Failed to start audio.');
+          setDetailedError(err?.message || String(err));
+          console.error('[TaskRoom] Audio start error:', err);
+        });
       }
     })();
     return () => {
