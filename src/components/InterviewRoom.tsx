@@ -602,7 +602,7 @@ function appendToTextBlock(text: string) {
       mediaRecorderRef.current.start();
     }
     const endpoint = "https://hvcodequarry.openai.azure.com/openai/realtime?api-version=2024-10-01-preview&deployment=gpt-4o-mini-realtime-preview"
-    const key = "COLmcASBDO6PfjeTrq4TvCYR8iltbERSI5d8KeIAeQAHKr4BxuK7JQQJ99BCACHYHv6XJ3w3AAABACOGBci3";
+    const key = "2fZQus7SSpxS4fUrNk5nf4JD0tabvejWzLgw3wJQxRzUz1FzFkkpJQQJ99BCACHYHv6XJ3w3AAABACOGiPYZ";
     const deploymentOrModel = "gpt-4o-mini-realtime-preview";
 
     if (isAzureOpenAI() && !endpoint && !deploymentOrModel) {

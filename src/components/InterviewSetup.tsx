@@ -94,7 +94,7 @@ export function InterviewSetup() {
   useEffect(() => {
     if (selectedRole === 'Others' && (skills.length === 5 || skills.length === 0)) {
       setSkills([]);
-      const apiKey = 'AIzaSyDHGWLeiroFLiCqfahIWCrDkWEjpjbFcMI';
+      const apiKey = 'AIzaSyAUtrHWOQMthC-6K0x2CZLeyg4leN8_XVU';
       const genAI = new GoogleGenerativeAI(apiKey);
       
       const model = genAI.getGenerativeModel({
