@@ -84,6 +84,57 @@ export function InterviewReport() {
     const radarChartUrl = getChartBase64('myChart');
     const strengths = normalized?.strengths || [];
     const weaknesses = normalized?.weaknesses || [];
+    // --- Compute domain-based skills for PDF ---
+    // Map of domain to included subskills
+    const DOMAIN_SKILLS = {
+      'Phonological & Oral Fluency': [
+        'Pronunciation', 'Fluency', 'Listening Accuracy', 'Listening Comprehension', 'Vocabulary', 'Word Appropriateness'
+      ],
+      'Linguistic Knowledge & Structure': [
+        'Grammar', 'Syntactic Awareness', 'Grammatical Fit', 'Sentence Structure Recognition', 'Contextual Understanding'
+      ],
+      'Reading & Comprehension': [
+        'Reading Comprehension', 'Attention', 'Focus', 'Information Retention', 'Content Accuracy', 'Paraphrasing', 'Recall'
+      ],
+      'Memory & Executive Control': [
+        'Working Memory', 'Logical Sequencing', 'Logical Reasoning', 'Task Adherence', 'Time Management', 'Attention Control'
+      ],
+      'Written Production & Mechanics': [
+        'Spelling Accuracy', 'Spelling Proficiency', 'Punctuation Awareness', 'Typing Accuracy', 'Written Expression'
+      ],
+    };
+    // Normalize skill names in report for matching
+    let skillEval: Record<string, any> = {};
+    try {
+      const parsed = typeof finalReport === 'string' ? JSON.parse(finalReport) : finalReport;
+      if (parsed && (parsed.data?.skills_evaluation || parsed.skills_evaluation)) {
+        skillEval = parsed.data?.skills_evaluation || parsed.skills_evaluation;
+      }
+    } catch {}
+    const skillScores: Record<string, number> = {};
+    Object.keys(skillEval).forEach((skill: string) => {
+      let score = 0;
+      const rating = skillEval[skill].rating;
+      if (typeof rating === 'string' && rating.includes('/')) {
+        score = parseInt(rating.split('/')[0], 10);
+      } else if (typeof rating === 'number') {
+        score = rating;
+      } else if (typeof skillEval[skill].obtained === 'number') {
+        score = skillEval[skill].obtained;
+      }
+      skillScores[skill.trim().toLowerCase()] = score;
+    });
+    const domainSkills = Object.entries(DOMAIN_SKILLS).map(([domain, subskills]) => {
+      const scores = subskills
+        .map(sub => skillScores[sub.trim().toLowerCase()])
+        .filter((s: number | undefined) => typeof s === 'number' && !isNaN(s));
+      const avg = scores.length > 0 ? (scores.reduce((a, b) => a + b, 0) / scores.length) : 0;
+      return {
+        name: domain,
+        candidate: avg,
+        ideal: 10,
+      };
+    });
     // Prepare tasks
     const tasks = (allTaskReports || [])
       .map((r, idx) => {
@@ -132,7 +183,7 @@ export function InterviewReport() {
           summary={summary}
           score={score}
           scoreLabel={scoreLabel}
-          skills={skills}
+          skills={domainSkills}
           radarChartUrl={radarChartUrl}
           strengths={strengths}
           weaknesses={weaknesses}
@@ -393,6 +444,73 @@ export function InterviewReport() {
               <div className="bg-gray-800 rounded-lg p-6 min-h-[300px] mb-8">
                 <div dangerouslySetInnerHTML={{ __html: String(markdown(finalReport)) }} />
               </div>
+              {/* --- Overall Skill Domains Section --- */}
+              {(() => {
+                // Parse the report to extract skills and scores
+                let data = null;
+                try {
+                  const parsed = typeof finalReport === 'string' ? JSON.parse(finalReport) : finalReport;
+                  if (parsed && (parsed.data?.skills_evaluation || parsed.skills_evaluation)) {
+                    data = parsed.data || parsed;
+                  }
+                } catch {}
+                if (!data) return null;
+                // Map of domain to included subskills
+                const DOMAIN_SKILLS = {
+                  'Phonological & Oral Fluency': [
+                    'Pronunciation', 'Fluency', 'Listening Accuracy', 'Listening Comprehension', 'Vocabulary', 'Word Appropriateness'
+                  ],
+                  'Linguistic Knowledge & Structure': [
+                    'Grammar', 'Syntactic Awareness', 'Grammatical Fit', 'Sentence Structure Recognition', 'Contextual Understanding'
+                  ],
+                  'Reading & Comprehension': [
+                    'Reading Comprehension', 'Attention', 'Focus', 'Information Retention', 'Content Accuracy', 'Paraphrasing', 'Recall'
+                  ],
+                  'Memory & Executive Control': [
+                    'Working Memory', 'Logical Sequencing', 'Logical Reasoning', 'Task Adherence', 'Time Management', 'Attention Control'
+                  ],
+                  'Written Production & Mechanics': [
+                    'Spelling Accuracy', 'Spelling Proficiency', 'Punctuation Awareness', 'Typing Accuracy', 'Written Expression'
+                  ],
+                };
+                // Normalize skill names in report for matching
+                const skillEval = data.skills_evaluation || {};
+                const skillScores: Record<string, number> = {};
+                Object.keys(skillEval).forEach(skill => {
+                  let score = 0;
+                  const rating = skillEval[skill].rating;
+                  if (typeof rating === 'string' && rating.includes('/')) {
+                    score = parseInt(rating.split('/')[0], 10);
+                  } else if (typeof rating === 'number') {
+                    score = rating;
+                  } else if (typeof skillEval[skill].obtained === 'number') {
+                    score = skillEval[skill].obtained;
+                  }
+                  skillScores[skill.trim().toLowerCase()] = score;
+                });
+                // For each domain, collect scores for included subskills
+                const domainAverages = Object.entries(DOMAIN_SKILLS).map(([domain, subskills]) => {
+                  const scores = subskills
+                    .map(sub => skillScores[sub.trim().toLowerCase()])
+                    .filter(s => typeof s === 'number' && !isNaN(s));
+                  const avg = scores.length > 0 ? (scores.reduce((a, b) => a + b, 0) / scores.length) : null;
+                  return { domain, avg, count: scores.length };
+                });
+                return (
+                  <div className="mb-8">
+                    <div className="font-bold text-xl mb-2 text-blue-300">Overall Skill Domains</div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {domainAverages.map(({ domain, avg, count }) => (
+                        <div key={domain} className="bg-gray-700 rounded-lg p-4 flex flex-col gap-1">
+                          <div className="font-semibold text-lg text-yellow-300">{domain}</div>
+                          <div className="text-white text-2xl font-bold">{avg !== null ? avg.toFixed(1) : 'N/A'}</div>
+                          <div className="text-gray-300 text-sm">{count > 0 ? `Based on ${count} subskill${count > 1 ? 's' : ''}` : 'No subskills found in report.'}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
             </>
           )}
           {filteredTaskReports && filteredTaskReports.length > 0 && (

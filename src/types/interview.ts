@@ -1,5 +1,5 @@
 export type jobDescription = '';
-export type Role = 'SDE' | 'Marketing Manager' | 'Sales Executive' | 'Marketing Manager (Long Form)' | 'Marketing Manager (Demo)' | 'Others';
+export type Role = 'SDE' | 'Marketing Manager' | 'Speech Assessment' | 'Marketing Manager (Long Form)' | 'Marketing Manager (Demo)' | 'Others';
 export type other = string;
 
 export interface Interview {

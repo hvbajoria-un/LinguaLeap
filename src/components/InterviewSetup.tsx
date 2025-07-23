@@ -10,7 +10,7 @@ import { useInterviewMetaStore } from '../store/interviewStore';
 export function InterviewSetup() {
   const navigate = useNavigate();
   const [step, setStep] = useState(1); // Step state for multi-page flow
-  const [selectedRole, setSelectedRole] = useState<Role>('Sales Executive');
+  const [selectedRole, setSelectedRole] = useState<Role>('Speech Asessment');
   const [skills, setSkills] = useState<string[]>([]);
   const [newSkill, setNewSkill] = useState('');
   const [otherRole, setOtherRole] = useState<other>('');
@@ -34,12 +34,12 @@ export function InterviewSetup() {
     'Computer Fundamentals'
   ];
 
-  const predefinedSalesSkills = [
-    'Sales',
-    'Business Development',
-    'Negotiation',
-    'Communication',
-    'Market Research'
+  const predefinedSpeechSkills = [
+    'Phonological & Oral Fluency',
+    'Linguistic Knowledge & Structure',
+    'Reading & Comprehension',
+    'Memory & Executive Control',
+    'Written Production & Mechanics'
   ];
 
   const predefinedMarketingManagerLongFormSkills = [
@@ -68,9 +68,9 @@ export function InterviewSetup() {
           setSkills(prevSkills => [...prevSkills, skill]);
       });
     }
-    else if (selectedRole === 'Sales Executive') {
+    else if (selectedRole === 'Speech Assessment') {
       setSkills([]);
-      predefinedSalesSkills.forEach(skill => {
+      predefinedSpeechSkills.forEach(skill => {
           setSkills(prevSkills => [...prevSkills, skill]);
       });
     }
@@ -365,7 +365,7 @@ export function InterviewSetup() {
                 <option value="Marketing Manager">Marketing Manager</option>
                 <option value="Marketing Manager (Long Form)">Marketing Manager (Long Form)</option>
                 <option value="Marketing Manager (Demo)">Marketing Manager (Demo)</option>
-                <option value="Sales Executive">Sales Executive</option>
+                <option value="Speech Assessment">Speech Assessment</option>
                 <option value="Others">Others</option>
               </select>
             </div>
