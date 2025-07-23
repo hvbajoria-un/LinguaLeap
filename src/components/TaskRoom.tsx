@@ -280,10 +280,11 @@ export const TaskRoom: React.FC<TaskRoomProps> = ({
           const binary = atob(message.delta);
           const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
           const pcmData = new Int16Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 2);
-          // Block all AI audio playback if 'submit task' was detected
-          if (!blockAIAudioRef.current) {
-            audioPlayer.current?.play(pcmData);
-          }
+          // Debug logging
+          console.log('PCM Data:', pcmData, 'AudioContext state:', audioPlayer.current?.getAudioContext()?.state, 'Blocked:', blockAIAudioRef.current);
+          // Always allow AI audio playback
+          // blockAIAudioRef.current = false; // ensure not blocked
+          audioPlayer.current?.play(pcmData);
           break;
         }
         case 'input_audio_buffer.speech_started':
@@ -312,12 +313,12 @@ export const TaskRoom: React.FC<TaskRoomProps> = ({
             transcript = item.content[0].transcript;
           }
           if (transcript) {
-            // Block all AI audio playback if 'submit task' is present
-            if (/submit task/i.test(transcript)) {
-              blockAIAudioRef.current = true;
-            } else {
-              blockAIAudioRef.current = false;
-            }
+            // Do not block AI audio playback anymore
+            // if (/submit task/i.test(transcript)) {
+            //   blockAIAudioRef.current = true;
+            // } else {
+            //   blockAIAudioRef.current = false;
+            // }
             addMessage('interviewer', transcript);
             lastTaskReportRef.current = transcript;
             // Auto-submit if AI says 'submit task'
@@ -1511,6 +1512,7 @@ Constraint Checklist & Confidence Score:
               </Button>
             </form>
           )}
+          {/* Resume Audio Button removed */}
         </div>
       </div>
     )

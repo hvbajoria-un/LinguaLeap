@@ -92,4 +92,9 @@ export class Player {
       await this.audioContext.resume();
     }
   }
+
+  // Public getter for audioContext for debugging
+  getAudioContext() {
+    return this.audioContext;
+  }
 }
