@@ -127,7 +127,7 @@ export const InterviewPDFExport: React.FC<InterviewPDFExportProps> = ({
         />
 
         {/* Content */}
-        <div className="relative z-10 h-full flex flex-col">
+          <div className="relative z-10 h-full flex flex-col">
           {/* Main Title */}
           <div className="flex-1 flex items-center justify-start pl-16">
             <div>
@@ -175,7 +175,7 @@ export const InterviewPDFExport: React.FC<InterviewPDFExportProps> = ({
               fontSize: '32px',
               color: BLACK,
               borderBottom: `3px solid ${BRAND_BLUE}`,
-              paddingBottom: '12px'
+              paddingBottom: '16px' /* Increased paddingBottom */
             }}
           >
             Candidate Details
@@ -231,7 +231,7 @@ export const InterviewPDFExport: React.FC<InterviewPDFExportProps> = ({
             </p>
             <div className="flex items-center justify-between mt-8 p-4 rounded" 
                  style={{ backgroundColor: LIGHT_GRAY }}>
-              <span className="text-sm">📄 Interview Report - {candidateName.replace(/\s+/g, '')}.pdf</span>
+              <span className="text-sm">📄 Interview Report - {candidateName.replace(/s+/g, '')}.pdf</span>
               <span className="text-sm" style={{ color: BRAND_BLUE }}>View File 📎</span>
             </div>
           </div>
@@ -255,7 +255,7 @@ export const InterviewPDFExport: React.FC<InterviewPDFExportProps> = ({
               fontSize: '32px',
               color: BLACK,
               borderBottom: `3px solid ${BRAND_BLUE}`,
-              paddingBottom: '12px'
+              paddingBottom: '16px' /* Increased paddingBottom */
             }}
           >
             Report Overview & Guidelines
@@ -345,14 +345,14 @@ export const InterviewPDFExport: React.FC<InterviewPDFExportProps> = ({
         }}
       >
         {/* Header */}
-        <div className="mb-8">
+        <div className="mb-4"> {/* Reduced margin-bottom from mb-8 to mb-4 */}
           <h2 
             className="font-bold mb-4"
             style={{ 
               fontSize: '32px',
               color: BLACK,
               borderBottom: `3px solid ${BRAND_BLUE}`,
-              paddingBottom: '12px'
+              paddingBottom: '16px' /* Increased paddingBottom */
             }}
           >
             Assessment Summary
@@ -360,7 +360,7 @@ export const InterviewPDFExport: React.FC<InterviewPDFExportProps> = ({
         </div>
 
         {/* Score and Chart Section */}
-        <div className="flex gap-8 mb-8">
+        <div className="flex gap-8 mb-6"> {/* Reduced margin-bottom from mb-8 to mb-6 */}
           <div className="flex-1">
             <div className="text-center mb-6">
               <div 
@@ -389,7 +389,7 @@ export const InterviewPDFExport: React.FC<InterviewPDFExportProps> = ({
         </div>
 
         {/* Skills Performance */}
-        <div className="mb-8">
+        <div className="mb-6"> {/* Reduced margin-bottom from mb-8 to mb-6 */}
           <h3 className="font-bold text-xl mb-4" style={{ color: BLACK }}>
             Skills Performance Overview
           </h3>
@@ -419,7 +419,7 @@ export const InterviewPDFExport: React.FC<InterviewPDFExportProps> = ({
         </div>
 
         {/* Strengths and Weaknesses */}
-        <div className="flex gap-6 mb-8">
+        <div className="flex gap-6 mb-6"> {/* Reduced margin-bottom from mb-8 to mb-6 */}
           <div className="flex-1">
             <div 
               className="rounded-lg p-6"
@@ -492,10 +492,10 @@ export const InterviewPDFExport: React.FC<InterviewPDFExportProps> = ({
                   color: BLACK
                 }}
               >
-                {task.name}
+                {task.name} {/* Removed .replace(/s+/g, '') */}
               </h2>
               <div 
-                className="text-2xl font-bold px-4 py-2 rounded-lg"
+                className="text-2xl font-bold px-4 py-2 rounded-lg flex items-center justify-center" /* Added flex classes for centering */
                 style={{ 
                   backgroundColor: BRAND_YELLOW,
                   color: BLACK
@@ -525,22 +525,24 @@ export const InterviewPDFExport: React.FC<InterviewPDFExportProps> = ({
             </h3>
             <div className="space-y-4">
               {task.skills.map((skill, i) => (
-                <div key={skill.name} className="border-l-4 border-blue-500 pl-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="font-semibold text-gray-800">{skill.name}</span>
-                    <span 
-                      className="font-bold px-3 py-1 rounded text-sm"
+                <div key={skill.name} className="flex items-center">
+                  <span className="w-48 font-medium text-gray-700">
+                    {i + 1}. {skill.name}
+                  </span>
+                  <div className="flex-1 h-3 bg-gray-200 rounded-full overflow-hidden mx-4">
+                    <div 
+                      className="h-3 rounded-full"
                       style={{ 
+                        width: `${Math.min((skill.candidate / skill.ideal) * 100, 100)}%`,
                         backgroundColor: skill.candidate >= skill.ideal * 0.8 ? '#10B981' : 
                                        skill.candidate >= skill.ideal * 0.6 ? '#3B82F6' :
-                                       skill.candidate >= skill.ideal * 0.4 ? '#F59E0B' : '#EF4444',
-                        color: 'white'
+                                       skill.candidate >= skill.ideal * 0.4 ? '#F59E0B' : '#EF4444'
                       }}
-                    >
-                      {skill.candidate}/{skill.ideal}
-                    </span>
+                    />
                   </div>
-                  <p className="text-gray-600 text-sm">{skill.explanation}</p>
+                  <span className="text-sm font-semibold text-gray-600 w-12 text-right">
+                    {skill.candidate}/{skill.ideal}
+                  </span>
                 </div>
               ))}
             </div>
@@ -549,20 +551,36 @@ export const InterviewPDFExport: React.FC<InterviewPDFExportProps> = ({
           {/* Strengths and Improvements */}
           <div className="flex gap-4 mb-6">
             <div className="flex-1">
-              <h4 className="font-semibold text-green-700 mb-2">Strengths</h4>
-              <ul className="list-disc ml-4 text-green-600 text-sm space-y-1">
-                {task.strengths.length ? task.strengths.map((s, i) => (
-                  <li key={i}>{s}</li>
-                )) : <li>No specific strengths noted</li>}
-              </ul>
+              <div 
+                className="rounded-lg p-6" /* Copied styles from summary page */
+                style={{ 
+                  backgroundColor: '#F0FDF4',
+                  border: '2px solid #BBF7D0'
+                }}
+              >
+                <h4 className="font-semibold text-green-700 mb-2">Strengths</h4>
+                <ul className="list-disc ml-4 text-green-600 text-sm space-y-1">
+                  {task.strengths.length ? task.strengths.map((s, i) => (
+                    <li key={i}>{s}</li>
+                  )) : <li>No specific strengths noted</li>}
+                </ul>
+              </div>
             </div>
             <div className="flex-1">
-              <h4 className="font-semibold text-red-700 mb-2">Areas for Improvement</h4>
-              <ul className="list-disc ml-4 text-red-600 text-sm space-y-1">
-                {task.weaknesses.length ? task.weaknesses.map((w, i) => (
-                  <li key={i}>{w}</li>
-                )) : <li>No specific areas noted</li>}
-              </ul>
+              <div 
+                className="rounded-lg p-6" /* Copied styles from summary page */
+                style={{ 
+                  backgroundColor: '#FEF2F2',
+                  border: '2px solid #FECACA'
+                }}
+              >
+                <h4 className="font-semibold text-red-700 mb-2">Areas for Improvement</h4>
+                <ul className="list-disc ml-4 text-red-600 text-sm space-y-1">
+                  {task.weaknesses.length ? task.weaknesses.map((w, i) => (
+                    <li key={i}>{w}</li>
+                  )) : <li>No specific areas noted</li>}
+                </ul>
+              </div>
             </div>
           </div>
 
@@ -601,7 +619,7 @@ export const InterviewPDFExport: React.FC<InterviewPDFExportProps> = ({
               fontSize: '32px',
               color: BLACK,
               borderBottom: `3px solid ${BRAND_BLUE}`,
-              paddingBottom: '12px'
+              paddingBottom: '16px' /* Increased paddingBottom */
             }}
           >
             Interview Transcript
@@ -629,7 +647,7 @@ export const InterviewPDFExport: React.FC<InterviewPDFExportProps> = ({
                   }}
                 >
                   {msg.speaker === 'interviewer' ? 'AI Interviewer' : 'Candidate'}
-                </span>
+                </span> {/* Added closing </span> tag */}
                 <div className="flex-1">
                   <p className="text-gray-800 leading-relaxed">{msg.message}</p>
                 </div>

@@ -35,11 +35,11 @@ export function InterviewSetup() {
   ];
 
   const predefinedSpeechSkills = [
-    'Phonological & Oral Fluency',
-    'Linguistic Knowledge & Structure',
+    'Pronunciation and Fluency',
+    'Grammar and Vocabulary',
     'Reading & Comprehension',
-    'Memory & Executive Control',
-    'Written Production & Mechanics'
+    'Attention and Memory',
+    'Written Communication Skills'
   ];
 
   const predefinedMarketingManagerLongFormSkills = [

@@ -87,19 +87,19 @@ export function InterviewReport() {
     // --- Compute domain-based skills for PDF ---
     // Map of domain to included subskills
     const DOMAIN_SKILLS = {
-      'Phonological & Oral Fluency': [
+      'Pronunciation and Fluency': [
         'Pronunciation', 'Fluency', 'Listening Accuracy', 'Listening Comprehension', 'Vocabulary', 'Word Appropriateness'
       ],
-      'Linguistic Knowledge & Structure': [
+      'Grammar and Vocabulary': [
         'Grammar', 'Syntactic Awareness', 'Grammatical Fit', 'Sentence Structure Recognition', 'Contextual Understanding'
       ],
       'Reading & Comprehension': [
         'Reading Comprehension', 'Attention', 'Focus', 'Information Retention', 'Content Accuracy', 'Paraphrasing', 'Recall'
       ],
-      'Memory & Executive Control': [
+      'Attention & Memory': [
         'Working Memory', 'Logical Sequencing', 'Logical Reasoning', 'Task Adherence', 'Time Management', 'Attention Control'
       ],
-      'Written Production & Mechanics': [
+      'Written Communication Skills': [
         'Spelling Accuracy', 'Spelling Proficiency', 'Punctuation Awareness', 'Typing Accuracy', 'Written Expression'
       ],
     };
@@ -457,19 +457,19 @@ export function InterviewReport() {
                 if (!data) return null;
                 // Map of domain to included subskills
                 const DOMAIN_SKILLS = {
-                  'Phonological & Oral Fluency': [
+                  'Pronunciation and Fluency': [
                     'Pronunciation', 'Fluency', 'Listening Accuracy', 'Listening Comprehension', 'Vocabulary', 'Word Appropriateness'
                   ],
-                  'Linguistic Knowledge & Structure': [
+                  'Grammar and Vocabulary': [
                     'Grammar', 'Syntactic Awareness', 'Grammatical Fit', 'Sentence Structure Recognition', 'Contextual Understanding'
                   ],
                   'Reading & Comprehension': [
                     'Reading Comprehension', 'Attention', 'Focus', 'Information Retention', 'Content Accuracy', 'Paraphrasing', 'Recall'
                   ],
-                  'Memory & Executive Control': [
+                  'Attention and Memory': [
                     'Working Memory', 'Logical Sequencing', 'Logical Reasoning', 'Task Adherence', 'Time Management', 'Attention Control'
                   ],
-                  'Written Production & Mechanics': [
+                  'Written Communication Skills': [
                     'Spelling Accuracy', 'Spelling Proficiency', 'Punctuation Awareness', 'Typing Accuracy', 'Written Expression'
                   ],
                 };
