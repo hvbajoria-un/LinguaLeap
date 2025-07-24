@@ -94,7 +94,7 @@ export function InterviewSetup() {
   useEffect(() => {
     if (selectedRole === 'Others' && (skills.length === 5 || skills.length === 0)) {
       setSkills([]);
-      const apiKey = 'AIzaSyAUtrHWOQMthC-6K0x2CZLeyg4leN8_XVU';
+      const apiKey = 'AIzaSyDHGWLeiroFLiCqfahIWCrDkWEjpjbFcMI';
       const genAI = new GoogleGenerativeAI(apiKey);
       
       const model = genAI.getGenerativeModel({
@@ -173,7 +173,7 @@ export function InterviewSetup() {
           </div>
         </div>
         <Button className="w-full bg-sky-600 hover:bg-sky-500 focus:ring-2 focus:ring-sky-400 text-lg py-3 rounded-xl transition-all duration-150" onClick={() => setStep(2)}>
-          Start Practice
+          Start Assessment
         </Button>
       </div>
     </div>

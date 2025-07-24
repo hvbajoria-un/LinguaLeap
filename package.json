@@ -39,7 +39,7 @@
     "react-icons": "^5.5.0",
     "react-router-dom": "^6.22.3",
     "rollup-plugin-node-builtins": "^2.0.0",
-    "rt-client": "https://github.com/Azure-Samples/aoai-realtime-audio-sdk/releases/download/js%2Fv0.5.2/rt-client-0.5.2.tgz",
+    "rt-client": "file:rt-client-0.5.2.tgz",
     "tailwind-merge": "^2.2.1",
     "uuid": "^9.0.1",
     "vercel": "^39.1.2",

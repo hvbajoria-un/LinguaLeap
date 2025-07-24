@@ -438,7 +438,7 @@ export const TaskRoom: React.FC<TaskRoomProps> = ({
         taskNumber: taskNum,
       };
       const taskPrompt = `Below is the JSON data for a single interview task. Parse the JSON and use it to evaluate the candidate's performance for Task ${taskNum}. Return the report in the specified JSON format only.\n\nJSON:\n\n${JSON.stringify(taskJson, null, 2)}\n\nFollow the system instruction for the output format.`;
-      const apiKey = 'AIzaSyAUtrHWOQMthC-6K0x2CZLeyg4leN8_XVU';
+      const apiKey = 'AIzaSyDHGWLeiroFLiCqfahIWCrDkWEjpjbFcMI';
       const genAI = new GoogleGenerativeAI(apiKey);
       const model = genAI.getGenerativeModel({
         model: "gemini-2.0-flash",
@@ -502,7 +502,7 @@ export const TaskRoom: React.FC<TaskRoomProps> = ({
       // Optionally add more context if needed
     };
     const feedbackPrompt = `Could you please share me the detailed evaluation report of the candidate and if he/she is eligible for the role or not based on the given data:\n\n${JSON.stringify(finalJson, null, 2)}\n\nFollow the system instruction for the output format.`;
-    const apiKey = 'AIzaSyAUtrHWOQMthC-6K0x2CZLeyg4leN8_XVU';
+    const apiKey = 'AIzaSyDHGWLeiroFLiCqfahIWCrDkWEjpjbFcMI';
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({
       model: "gemini-2.0-flash",
